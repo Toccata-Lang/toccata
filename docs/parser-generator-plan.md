@@ -1,7 +1,14 @@
 # Parser Generator Plan (grammar data → recursive-descent reader)
 
-Status: in planning (2026-09-04). Settled items are final until
-re-opened; open items are queued. Companion to
+Status: v1 emitter built and verified through item 7c; item 8's
+blocker (the inlined-cond codegen crash) resolved by the grouped-
+literal site-(a) form (item-8 note, UPDATE 2). REWRITE DIRECTED
+(2026-09-26): the owner judged the v1 emitter horrible (its
+explicit-recursion / `-acc` threading exists largely for the
+reduce-capture leak, now RESOLVED) and directed a fold-based
+rewrite (emitter v2) on hvm-core's `fold` recursion scheme —
+items 10–18; v1 items 3–7c are superseded. Settled items are final
+until re-opened; open items are queued. Companion to
 `docs/new-compiler-plan.md` — this is a side project (dev-time
 tooling), not a phase of the compiler plan.
 
@@ -50,7 +57,9 @@ replace it — speculative, not planned.
   (untracked). It is MOVED (renamed — it cannot share a name with the
   hand-written `interpreter/intrp-rdr.toc` in the same directory) and
   the top-level copy deleted. One spelling of the module in the graph.
-- `interpreter/intrp-emit.toc` — the emitter (library, no main).
+- `interpreter/intrp-emit.toc` — the emitter (library, no main;
+  rewritten IN PLACE for v2 by items 10–16 — the v1 source stays in
+  git history).
 - `interpreter/emit-*.toc` — acceptance drivers (committed, same
   convention as the `rdr-*` drivers).
 - `interpreter/gen-rdr.toc` — the generated module. Written by the
@@ -60,71 +69,124 @@ replace it — speculative, not planned.
 
 ## Settled design
 
-### Emitter API (`interpreter/intrp-emit.toc`)
+### Emitter API — v2, fold-based (settled 2026-09-26)
 
 The emitter `add-ns`es the grammar module (for the `ParserCombinator`
 values) and the hand-written rdr module (for shared helpers such as
 `vect-concat`; define locally instead if the dependency is unwanted —
 implementer's choice, but keep module path spellings identical).
 
+The v1 design (the `emit-body` / `emit-pred` / `emit-many` /
+`emit-ref` / `emit-fn` defp protocols, the flipped-receiver
+`emit-many`, the `walk-children` / `contains-recur?` /
+`alt-char-level?` pre-passes, the `-acc` line-building recursions)
+is RETIRED (2026-09-26, owner decision): its convoluted shape
+existed largely to route around the reduce-capture leak, which is
+RESOLVED (2026-09-26, probed — Inherited verified facts), and the
+recursion scheme the rewrite needs already exists: `fold` /
+`unfold` (hvm-core.toc:586–599) over the `recurse` container
+protocol (hvm-core.toc:123), with `ParserCombinator` implementing
+`recurse` for every ctor (item 2). v2 is two phases.
+
+**Phase 1 — analyze (the catamorphism).** `analyze [pc]` =
+`(fold pc h)` — the core `fold`, no new walker. `h` is ONE function
+dispatching on `type-name`; after `recurse` reassembles a node, the
+CONTAINER ctors' fields hold the children's `NodeIR` values while
+the LEAF ctors hold their raw fields — `h` knows which by ctor.
+`Recur` is a `recurse`-leaf, so the fold terminates structurally
+even though the generated parser is recursive. The IR is
+classification + structure only — NO names, NO source lines:
+
 ```toccata
-;; Context threaded through every emit call:
-;;   rule   — name of the rule currently being emitted ("" at top
-;;            level); a Recur node renders as a call to this name.
-;;   prefix — name prefix for generated helpers (the enclosing rule
-;;            or helper name + "-").
+;; kind        — the bare ctor name ("All", "Many", "CharRange",
+;;               "NotChar", "Error", "AlwaysSucceed", "Ignore",
+;;               "Rule", "Recur"), or "String" for a bare string
+;;               literal
+;; char-level? — Some None iff this node classifies a single char:
+;;               CharRange / NotChar / one-char String; Any iff ALL
+;;               alts char-level; Rule / Many iff the child is;
+;;               All / Ignore never
+;; pred        — [String] char-predicate source (char-level nodes
+;;               only; [] otherwise)
+;; data        — ctor-specific: CharRange [lo hi]; NotChar [ch];
+;;               String [lit]; Error [msg]; AlwaysSucceed [v];
+;;               All / Any [NodeIR ...]; Many / Ignore [NodeIR];
+;;               Rule [name NodeIR]; Recur []
+(deftype NodeIR [kind char-level? pred data])
+```
+
+The classification is BOTTOM-UP, so the v1 pre-passes disappear:
+a `Many`'s fast/slow path IS its child IR's `char-level?`; an
+`Any`'s combined predicate reads its alts' flags. (The v1
+`needs-recur` pre-pass is dropped outright — the `(def <rule>)`
+crutches are emitted for EVERY rule, so no flag is needed; see the
+Generated module template.)
+
+**Phase 2 — render (top-down over the IR).** A plain `defn` walks
+the IR with the context (the enclosing rule name + the helper-name
+prefix) and emits source per the Ctor table: the index-path helper
+names are assigned here (names are top-down, so the bare fold stays
+name-free — no placeholder rewriting), a `Recur` renders as a call
+to the context's rule name; the `(def <rule>)` crutches are
+module-level (every rule — see the Generated module template).
+Line assembly is plain vector append — no
+`-acc` threading, no flipped-receiver protocol. (An IR flag is
+DATA the render inspects, not a tag-shaped protocol impl — the
+Result-discrimination section's objection to tag protocols does not
+apply.)
+
+**Driver-facing API (unchanged from v1 — the driver and Makefile
+take no edits):**
+
+```toccata
 (deftype EmitCtx [rule prefix])
-
-;; Source lines for an expression which, given the let-bound symbol
-;; `state`, yields a ParserResults. One impl per ctor. -> [String]
-(defp emit-body [pc ctx])
-
-;; Source of a single-char predicate expression over char string `c`.
-;; Implemented ONLY for char-level ctors (CharRange, NotChar, bare
-;; String, Any-of-char-level, and Rule/Many delegating per the ctor
-;; table); default body aborts with a clear message — calling it on a
-;; general parser is an emitter bug, and the abort IS the
-;; char-level classification (no yes/no tag needed at most sites).
-;; -> [String]
-(defp emit-pred [pc ctx])
-
-;; `Many` helper emission by FLIPPED RECEIVER: the receiver is the
-;; CHILD combinator (task-1 ruling — no yes/no tag protocol; the impl
-;; IS the path). Char-level ctors (CharRange, NotChar, bare String,
-;; char-level Any, and Rule/Many delegating per the ctor table) get
-;; the run-path impl (the <name>-char predicate defn + read-run
-;; wrapper); the default body is the loop path (lift the child if
-;; anonymous, emit the site-(b) accumulator defn). `emit-body` for
-;; `Many` renders only the call expression. -> [String]
-(defp emit-many [child ctx])
-
-;; How to reference this parser in call position. Rule -> its name
-;; (the Rule's defn is emitted at module level). Anonymous
-;; combinators are never referenced directly: the parent lifts them
-;; via emit-fn first. -> String
-(defp emit-ref [pc ctx])
-
-;; Lift any combinator to a named parser fn (plain defn, no protocol):
-;;   (defn <name> [state] <emit-body pc (EmitCtx <rule> <name>->)>)
-(defn emit-fn [pc name ctx])
-
-;; Driver: takes the vector of top-level rules to emit + the entry
-;; rule name. Emits, in order: module header (add-ns of the helper
-;; layer), one parser defn per Rule (char-level body -> one-char
-;; parser defn; see ctor table), generated helpers, then a main
-;; template (see Generated module). -> [String]
+;; The char-level predicate source for pc, as a String (the
+;; driver's write-file contract). Aborts on a non-char-level pc.
+(defn emit-pred [pc ctx])
+;; The full generated module as [String] lines: header, (def)
+;; crutches, one parser defn + helpers per Rule, main template.
 (defn emit-module [rules entry])
 ```
+
+**Incremental swap (settled; mechanics clarified 2026-09-26,
+ralph review):** during items 12–14a the render dispatches per
+ctor and falls back to the v1 emission for ctors not yet ported
+(the v1 code stays in the file); item 16 deletes it. The render
+walks the ORIGINAL combinator and its IR in LOCKSTEP (the entry
+points have both — the IR is isomorphic to the combinator except
+for the Recur `f` field, which the v1 emission ignores), because
+the v1 functions take combinator values, not IRs: a ported ctor
+renders from the IR; an unported one delegates its subtree to the
+v1 defns `emit-rule-block` calls at that position, with the same
+context. Where v1's `emit-rule-block` gives a Rule-over-X shape a
+special treatment (the Many branch — loop defn + one-arg wrapper),
+the whole rule block falls back to v1. Item 13 adds one shape-level
+fallback inside the ported `Any`: an Any with ≥2 bare-String alts
+delegates to the v1 grouped emission until item 13a. `make
+emit-pred` (all 13 diffs) must pass at the end of EVERY item
+10–16.
+
+**Regression oracle (settled):** v2 must reproduce the committed
+expected files BYTE-EXACTLY — the 13 files in
+`interpreter/emit-want/` (six predicates, six synthetic modules,
+module-real) and the item-8 corpus `-want` files. The generated-
+CODE contract (the Ctor table, the naming, the templates, the
+grouped-literal site-(a) form, the crutches) is unchanged by the
+rewrite — only the emitter's internals move. A failed diff is a v2
+contract bug by default (fix the emitter); a deliberate output
+change requires the owner to update the expected file and record it
+in the as-built note.
 
 ### Char-level vs parser-level
 
 A combinator is **char-level** iff it classifies a single character:
 `CharRange`, `NotChar`, bare `String` (one char), `Any` of char-level
 alts, and `Rule`/`Many` whose child is char-level (they delegate).
-Char-level combinators have `emit-pred` and `emit-many` impls;
-everything else hits the default abort / the default loop path.
-`Many` of a char-level child is the **maximal-run fast path** (one
-generated set-predicate defn + one `read-run`), not a loop.
+In v2 the classification is computed bottom-up in `analyze` and
+carried on the IR (`char-level?`); `emit-pred`'s abort on a
+non-char-level node stays the emitter-bug signal. `Many` of a
+char-level child is the **maximal-run fast path** (one generated
+set-predicate defn + one `read-run`), not a loop.
 
 ### Ctor → generated code
 
@@ -134,6 +196,9 @@ Generated code assumes the helper layer (from
 `Token`, `make-state`, `take-char`, `skip-whitespace`, `read-run`,
 `str-prefix?`, `state-line`, and the `parse-then` / `parse-or` kit
 from the Result-discrimination section.
+
+In v2 this table drives the RENDER phase (the column names are the
+v1 protocol names — the render computes the same source).
 
 | Ctor | `emit-pred` (over char string `c`) | `emit-body` (given let-bound `state`) |
 |---|---|---|
@@ -177,13 +242,17 @@ defn), `double-quoted-string-1` (the Many loop),
 child is not char-level, so the slow path applies and no `-char` defn
 is generated).
 
-Lifting rule: an anonymous combinator is lifted to a named helper iff
-it is (a) the child of a `Many` slow path, (b) an alternative of a
-parser-level `Any`, or (c) any position where its body would contain a
-`let` inside a non-else `cond` clause (the malformed-cond hazard — see
-inherited facts). Bare `String` bodies are let-free and inline
-everywhere. Consequence: the generated code contains NO `let` in any
-non-else `cond` clause, by construction.
+Lifting rule (reconciled with the byte-exact oracle, 2026-09-26
+ralph review): an anonymous combinator is lifted to a named helper
+UNLESS it is a bare `String`. The committed want files lift every
+anonymous non-String child — e.g. `ig-all-2`, an anonymous `All`
+child of an `All`, whose body contains no `let` — so the earlier
+(a)/(b)/(c) formulation under-described the v1 output; the
+committed want files are the spec. Bare `String` bodies are let-free
+and inline everywhere. Consequence: the generated code contains NO
+`let` in any non-else `cond` clause, by construction (the one-char
+parser bodies — the only lifted bodies containing a `let` — never
+inline).
 
 ### Value semantics (what the generated parsers produce)
 
@@ -220,10 +289,20 @@ non-else `cond` clause, by construction.
   ...)
 ```
 
-Self-recursion only (`expression` ↔ its call alternative) → no forward
-declarations needed (verified: self-recursion needs none under new-toc).
-If the grammar ever grows mutual recursion, the emitter emits the
-`(def name)` crutch.
+The emitter emits a bare `(def <rule>)` crutch after the header for
+EVERY rule (the v1 `rule-decls` and all 13 committed want files do
+this — the 2026-09-26 ralph review reconciled the earlier "only
+`needs-recur` rules" wording with the byte-exact oracle and dropped
+the now-unneeded `needs-recur` IR flag). Rationale (v1 comment,
+item 8): the compiler is single-pass — a defn body referencing a
+later top-level symbol fails `Undefined symbol`, and the defn order
+(rule-vector order, entry first) leaves most rules forward-
+referenced; the lifted Many-loop helper is emitted BEFORE the rule
+defn and calls it (a cross-defn forward reference — the item-7c
+crutch); declaring every rule is uniform and makes the module
+robust to rule-vector order. The bare def must be separated from
+the defn — immediately before does not register (see the Inherited
+verified facts).
 
 ## Result discrimination (settled in task 1, 2026-09-04)
 
@@ -290,14 +369,22 @@ free variables — (b)'s `fn [v s2]` captures `acc`, (a)'s else-fns
 capture `state`, (c)'s inner fns capture prior `vN`s. The inherited
 reduce-capture leak (1MB term buffer exhausted over ~194 nodes) is
 the same shape; task 2a probes it before any kit template is used in
-a committed driver.
+a committed driver. UPDATE (2026-09-26): the reduce-capture leak is
+RESOLVED — capture-reducing probes run clean at small and 2000-
+element scale (malloc diff 0, remaining nodes 0), so this standing
+condition no longer blocks kit-template use; the explicit-recursion
+(-acc) shape already in the emitter remains valid but is no longer
+required.
 
-**`Many` fast/slow classification (ruling):** the flipped-receiver
-protocol `emit-many` (see Emitter API) — char-level ctors carry the
-run-path impls, the default body is the loop path. A yes/no tag
-protocol was rejected: it would re-introduce the tag-shaped-impl
-pattern this section rejects. Invariant, in the generated code and
-in the emitter alike: impls ARE the branches.
+**`Many` fast/slow classification (ruling, SUPERSEDED 2026-09-26):**
+the v1 ruling — the flipped-receiver protocol `emit-many` (char-
+level ctors carry the run-path impls, the default body the loop
+path; a yes/no tag protocol rejected as tag-shaped-impl) — is
+superseded by the v2 design: the classification is a bottom-up IR
+flag (`char-level?` in `analyze`), and the render branches on it.
+The invariant survives in the form that applies to v2: the
+generated code's branches are real code paths, and the emitter's
+classification is DATA, not a protocol-impl shape.
 
 Out of scope for THIS project: retrofitting the hand-written
 `interpreter/intrp-rdr.toc`'s `result-kind` to this pattern —
@@ -609,10 +696,15 @@ Curated for this project; the source of truth is the compiler plan.
 - Named / namespace-qualified functions are first-class values —
   passable as arguments, callable as `(f x)`.
 - `reduce` is a left fold `(reduce coll init f)`. A `reduce` whose
-  closure captures a FREE VARIABLE leaks term pairs on the lazy
-  machine (over 194 nodes it exhausts the 1MB term buffer) — use
-  explicit recursion passing the value as a plain parameter (the
-  `threading-acc` / `count-class-acc` pattern).
+  closure captures a FREE VARIABLE used to leak term pairs on the lazy
+  machine (over 194 nodes it exhausted the 1MB term buffer) — the
+  historical workaround was explicit recursion passing the value as a
+  plain parameter (the `threading-acc` / `count-class-acc` pattern).
+  RESOLVED (2026-09-26): the leak no longer reproduces — capture-
+  reducing probes run clean at small and 2000-element scale (malloc
+  diff 0, remaining nodes 0; `scratch/reduce-capture-probe.toc` /
+  `-probe2.toc`). The explicit-recursion workaround is no longer
+  required; existing `-acc` code remains valid.
 - `str*` over a vector of `str-vect` implementors concatenates to one
   String; `(str* [n])` renders an Integer (via `number-str`). `pr*`
   takes ONE string — `pr*` on a vector aborts silently; build the
@@ -778,6 +870,21 @@ generated code)**
 - Never touch the `toccata` Makefile target. Never `sudo`.
 
 **As-built notes**
+
+- Rewrite decision (2026-09-26): the owner judged the v1 emitter
+  horrible — its explicit-recursion / `-acc` threading shape exists
+  largely for the reduce-capture leak, which is RESOLVED (probed
+  2026-09-26: capture-reducing probes clean at small and 2000-
+  element scale, malloc diff 0, remaining nodes 0). hvm-core.toc
+  carries the recursion schemes (`fold` / `unfold`, hvm-core.toc:
+  586–599, over the `recurse` container protocol, hvm-core.toc:123),
+  and the `ParserCombinator` deftype already implements `recurse`
+  for every ctor (item 2) — the owner directed a fold-based rewrite
+  (emitter v2, items 10–18). The committed `interpreter/emit-want/`
+  expected files and the item-8 corpus `-want` files are the byte-
+  exact regression oracle for v2. The v1 as-built notes below are
+  retained as history; the v1 emitter source remains in git
+  history (the rewrite is in place at `interpreter/intrp-emit.toc`).
 
 - Item 2 (2026-09-04): the 67a1125 source's `recurse`/`str-vect`
   impls carried free-variable bugs (`parser` / `name` / `f` used bare
@@ -1184,6 +1291,19 @@ this file + AGENTS.md. Generated code follows `docs/toccata-style.md`.
 Note: NEVER generate inline code. When needed, ask the user to provide
 a solution.
 
+Toolchain health gate (the crash set drifts with machine state — see
+the BROKEN-AGAIN facts in Inherited verified facts): at the START of
+each iteration, before any edit, `make emit-pred` must pass on the
+committed state (every item commits, so the tree is clean at
+iteration start). If it fails with silent crashes that survive the
+5-retry rule, the window is degraded — do NOT edit source to chase a
+degraded window; record the window state (which files crash, retry
+counts) in the as-built note and stop the iteration. Leak half of a
+done-when: if the committed state's driver already leaks in this
+window (baseline drift), the requirement is leak == the baseline
+measured on the committed state in the same window, recorded in the
+as-built note (the item-7a/7b precedent).
+
 - [x] **1. Owner decision: result-discrimination pattern (+ emitter
     classification ruling)**
   Settle the open items above: (a)–(d) site shapes get an exact
@@ -1226,135 +1346,190 @@ a solution.
     in this file. If it leaks, the site-(a)/(b)/(c) templates are
     re-opened before task 4.
 
-- [x] **3. Emitter skeleton + char-level emission**
-  `interpreter/intrp-emit.toc` (library): `add-ns` of the grammar
-  module; `EmitCtx [rule prefix]` (no `!` annotations); `emit-pred`
-  protocol — impls for `CharRange` (LO/HI evaluated at emit time via
-  `char-code` + `str*`), `NotChar` (`(not (str= c CH))`), bare
-  `String` (`(str= c S)`), `Any` (map `emit-pred` over alts, join with
-  `or` — a non-char-level alt hits the default abort), `Rule` and
-  `Many` (delegate per the ctor table); default body
-  aborts with a clear message naming the ctor. `emit-module` v1:
-  emits a module header + char-level rules' predicates only. Driver
-  `interpreter/emit-pred.toc` + Makefile target (`rdr-top` pattern):
-  emits the predicates for `digits`, `upper-case`, `lower-case`,
-  `alpha`, `symbol-start`, `rest-of-symbol` and asserts the EXACT
-  expected source lines (fingerprint via `str*` over the emitted
-  vector, the `body-fingerprint` convention from `rdr-defp.toc`).
-  - Done when: the driver prints OK for all six predicates with exact
-    expected output, zero leaks, 0 remaining nodes, exit 0.
+- Items 3–7c (the v1 emitter: skeleton + char-level, leaf bodies +
+  pipeline, `All` + `Ignore`, `Any`, `Many` slow, `Many` fast,
+  `Recur`) are SUPERSEDED (2026-09-26) by items 10–16 below — the
+  fold-based emitter v2 rebuilds the same generated-code contract,
+  verified byte-exactly against the committed expected files. Their
+  as-built notes are retained above; the v1 source is in git
+  history. Old item 8 re-lands as 17; old item 9 as 18.
 
-- [x] **4. Leaf body ctors + end-to-end pipeline**
-  `emit-body` impls: `CharRange` (one-char parser), `NotChar`, bare
-  `String` (let-free via `str-prefix?`), `AlwaysSucceed`, `Error`;
-  `emit-ref` (Rule → name; default aborts); `emit-fn` (defn wrapper,
-  prefix = name + "-"). The driver gains an inline-C file write: it
-  writes the generated module to `interpreter/gen-rdr.toc` (build
-  artifact, not committed). Makefile target `gen-rdr` builds
-  `interpreter/gen-rdr.toc` (`rdr-top` pattern, depends on
-  `interpreter/intrp-rdr.toc` for the helper layer). Generated `main`
-  template per the Settled section (slurp argv file, parse a sequence
-  of expressions, one result line each, `file:line: msg` on error,
-  non-zero exit on error).
-  - Done when: a synthetic one-rule grammar (e.g. `(Rule "digit"
-    (CharRange "0" "9"))`) generates a module that builds under
-    `make gen-rdr` and, run on a sample file, prints the expected
-    match lines / `file:line: msg` error lines by hand-verification;
+- [ ] **10. Emitter v2: `NodeIR` + `analyze` (the fold)**
+  Rewrite `interpreter/intrp-emit.toc` IN PLACE: the `NodeIR`
+  deftype (no `!` annotations), `h` — ONE function dispatching on
+  `type-name` (after `recurse`, container ctors' fields hold the
+  children's NodeIRs; leaves hold raw fields — see the Settled v2
+  API) — and `analyze [pc]` = `(fold pc h)` (the hvm-core
+  recursion scheme, hvm-core.toc:587 — no new walker). The v1
+  `EmitCtx` / `emit-pred` / `emit-module` entry points stay callable
+  on their v1 bodies until items 11–15 replace them — the driver is
+  one binary and must build and pass at every step.
+  - Done when: the library loads clean (`*** Loaded
+    interpreter/intrp-emit.toc`, retry rule applies); `make
+    emit-pred` still passes all 13 diffs (the v1 paths are
+    untouched); a temporary interpreter-side probe (deleted before
+    the commit — scratch probes cannot add-ns interpreter modules)
+    folds `grammar/digits`, `grammar/alpha`, `grammar/symbol-start`,
+    `grammar/expression` and prints the hand-verified top-node
+    classifications (digits: char-level; alpha: char-level — Any of
+    two char-level Rules; symbol-start: char-level — Any of a Rule
+    + bare Strings; expression: NOT char-level); zero leaks, 0
+    remaining nodes.
+
+- [ ] **11. Emitter v2: `emit-pred` via analyze + render**
+  The render phase for char-level IRs; `emit-pred [pc ctx]`
+  switches to the v2 path: `analyze`, then render the predicate per
+  the Ctor table's emit-pred column (the abort on a non-char-level
+  IR stays the emitter-bug signal). Note: the v1 `Many` fast path
+  builds the `<name>-char` set-predicate defn by calling
+  `emit-pred` — after this item it calls the v2 defn; the module
+  diffs are the drift catcher, so the v2 predicate output must stay
+  byte-identical.
+  - Done when: `make emit-pred` — the six predicate diffs pass
+    byte-identical (scratch/emit-got/{digits,upper-case,lower-case,
+    alpha,symbol-start,rest-of-symbol}.txt vs
+    interpreter/emit-want/), and the seven module diffs still pass
+    (v1 `emit-module` untouched); zero leaks, 0 remaining nodes.
+
+- [ ] **12. Emitter v2: module assembly + leaf bodies**
+  The render's module assembly: the header, the `(def <rule>)`
+  crutches (EVERY rule — see the Generated module template), one
+  parser defn + helpers per Rule, and the v1 main template verbatim.
+  The render for the one-char parsers (`CharRange` / `NotChar` /
+  bare `String` let-free), `AlwaysSucceed`, and `Error`. `All` /
+  `Ignore` / `Any` / `Many` / `Recur` still fall back to the v1
+  emission (the incremental swap — lockstep, see the Settled v2
+  API).
+  - Done when: `make emit-pred` — all 13 diffs pass byte-identical,
+    with module.txt generated fully via the v2 path (the one-rule
+    char-level grammar — assembly + crutches + one-char body + main
+    template exercised end-to-end) and the `ig-alpha` block of
+    module-ig.txt via the v2 path; zero leaks, 0 remaining nodes.
+
+- [ ] **12a. Emitter v2: `All` + `Ignore` + the lifting rule**
+  The render for `All` (site-(c) nested `parse-then`), `Ignore`
+  (site-(c) shape — the fn captures nothing; no helper needed), and
+  the lifting rule (anonymous non-String combinators to index-path
+  helpers, emitted BEFORE the Rule defn that calls them — use-
+  after-definition; bare `String` inlines everywhere).
+  - Done when: `make emit-pred` — all 13 diffs pass byte-identical,
+    with the `ig-all` and `ig-ignore` blocks of module-ig.txt now
+    via the v2 path (module-ig is now fully v2 — it contains no
+    Any/Many/Recur); zero leaks, 0 remaining nodes.
+
+- [ ] **13. Emitter v2: `Any` (basic site-(a))**
+  The render for parser-level `Any`: nested `parse-or` per the
+  site-(a) template, anonymous alts lifted to index-path helpers,
+  bare-String alts inlined as a single cond at their slot (with 0
+  or 1 String alt the grouped form coincides with the plain form).
+  An Any with ≥2 bare-String alts still falls back to the v1
+  grouped emission (item 13a). `Many` / `Recur` still fall back to
+  v1.
+  - Done when: `make emit-pred` — all 13 diffs pass byte-identical,
+    with module-an.txt now via the v2 path and the `expression` Any
+    of module-real.txt (three named Rule alts + one anonymous All,
+    no bare Strings) via the v2 path, while `symbol-start` /
+    `rest-of-symbol` / `escaped-char` (≥2 bare-String alts) remain
+    v1 fallbacks; zero leaks, 0 remaining nodes.
+
+- [ ] **13a. Emitter v2: `Any` grouped-literal form (≥2 bare-String
+    alts)**
+  Collapse ALL bare-String alts of an Any into ONE inlined cond (a
+  flat `(or ...)` of `str-prefix?` tests) at the first String alt's
+  slot — the item-8 grouped-literal form (the inlined-cond codegen-
+  crash resolution; ≥2 inlined bare-String conds in a parse-or
+  position crash new-toc's codegen). The v1 fallback for ≥2-String-
+  alt Any goes away. The an grammar has only ONE String alt, so
+  this shape is exercised ONLY by module-real (symbol-start, rest-
+  of-symbol, escaped-char) — watch the two bug shapes the item-8
+  note recorded: the group-done marker must be `(Some None)`, not
+  bare `Some`; the group's lines must be self-balanced (in the
+  ≥2-literal case the ParserError line ends with three closes).
+  - Done when: `make emit-pred` — all 13 diffs pass byte-identical,
+    with every `Any` of module-real.txt (symbol-start, rest-of-
+    symbol, escaped-char, expression) now via the v2 path; zero
+    leaks, 0 remaining nodes.
+
+- [ ] **14. Emitter v2: `Many` slow path (loop)**
+  The render for a `Many` whose child IR is NOT char-level: the
+  lifted child (if anonymous) + the site-(b) acc-recursion loop
+  defn (acc-recursion, NOT a reduce — the loop is not a vector
+  walk) + the child-ref call `(<name> <sv> empty-vector)`. A
+  char-level child still falls back to the v1 fast path (item
+  14a). `Recur` still falls back to v1.
+  - Done when: `make emit-pred` — all 13 diffs pass byte-identical,
+    with the slow loop defns now via the v2 path (`mn-entry-1` +
+    lifted child in module-mn.txt; `fn-entry-2` + lifted child in
+    module-fn.txt), the fast-path Many defns still v1 fallbacks;
     zero leaks, 0 remaining nodes.
 
-- [x] **5. `All` + `Ignore`**
-  `emit-body` impls: `All` (nested `parse-then` per the site-(c)
-  template, state threaded through the continuation params, result =
-  vector of sub-values), `Ignore` (site-(c) shape: `parse-or` over
-  `parse-then` with `identity` as the else-fn). Anonymous children
-  lifted per the Lifting rule.
-  - Done when: a synthetic grammar exercising `All` of mixed
-    named/anonymous/bare-string children (and `Ignore` of an
-    `All`) generates a module that builds and parses a sample file
-    with hand-verified output; zero leaks.
+- [ ] **14a. Emitter v2: `Many` fast path (maximal run)**
+  The render for a `Many` whose child IR IS char-level: the
+  `<name>-char` set-predicate defn from the child's predicate + the
+  `read-run` wrapper with the `Token` → `ParserMatch` wrap + the
+  child-ref call `(<name> <sv>)`. The v1 fallback for `Many` goes
+  away.
+  - Done when: `make emit-pred` — all 13 diffs pass byte-identical,
+    with every `Many` of module-mn.txt / module-fn.txt now via the
+    v2 path (incl. the fast paths via Rule delegation: `mn-run-0` /
+    `mn-entry-0` / `fn-digits-0` / `fn-word-0`); zero leaks, 0
+    remaining nodes.
 
-- [x] **6. `Any` (parser-level)**
-  `emit-body` impl: nested `parse-or` per the site-(a) template;
-  anonymous alts lifted to `N-i` helpers; the char-level `Any`
-  behavior (via `emit-pred`) unchanged.
-  - Done when: a synthetic grammar with a parser-level `Any` mixing
-    bare strings, an anonymous `All`, and a named Rule generates a
-    module that builds and parses a sample file where each
-    alternative wins at least once and a failure case yields the
-    expected error; zero leaks.
+- [ ] **15. Emitter v2: `Recur`**
+  The render for `Recur` (a call to the context's rule name over
+  the threaded state; the `f` field is data the emitter ignores; in
+  child position referenced by the rule name, never lifted). The
+  `(def <rule>)` crutches already come from the item-12 module
+  assembly (every rule). The v1 fallback is now unreachable for the
+  driver's grammars.
+  - Done when: `make emit-pred` — all 13 diffs pass byte-identical,
+    with module-rc.txt now generated via the v2 path; zero leaks, 0
+    remaining nodes.
 
-- [x] **7a. `Many` slow path (`emit-many` protocol + loop)**
-  `defp emit-many [child ctx]` — the flipped-receiver protocol: the
-  DEFAULT body is the loop path (lift the child to a named helper if
-  anonymous, emit the site-(b) acc-recursion defn — acc-recursion,
-  NOT a reduce — and return the call expression `(<name> state
-  empty-vector)`); `emit-body` impl for `Many` (renders only the call
-  expression — the defn comes from `emit-many`); `walk-children` /
-  `child-lifted?` handling for `Many` per the Lifting rule (the child
-  of a `Many` slow path is lifted).
-  - Done when: a synthetic grammar with `Many` of a parser-level
-    child (a named Rule and an anonymous `All`) generates a module
-    that builds and parses a sample file to the correct vector-of-
-    child-values, with the loop terminating on non-matching input;
-    zero leaks, 0 remaining nodes.
+- [ ] **16. Emitter v2: delete the v1 code; full driver regression**
+  Remove the v1 emission paths from `interpreter/intrp-emit.toc`:
+  the v1 protocols (`emit-body` / `emit-ref` / `emit-many` /
+  `child-ref` / `child-lifted?` / `walk-children`) and the defns
+  only they call. The split is mechanical — once the render is
+  total, the v1 defps are dead code; delete them and whatever
+  becomes unreachable. KEEP everything the v2 render and the driver
+  entry points use (`EmitCtx`, the `emit-pred` / `emit-module`
+  public signatures, `render-literal` / `escape-str`, `append-acc`,
+  `emit-header` / `emit-main`, and any line helper the v2 render
+  shares with v1). No new emission code expected.
+  - Done when: the library loads clean (`*** Loaded
+    interpreter/intrp-emit.toc`, retry rule applies); `make
+    emit-pred` — all 13 diffs pass byte-identical, including
+    module-real.txt vs interpreter/gen-rdr.toc; `make gen-rdr`
+    builds the generated real-grammar module; zero leaks, 0
+    remaining nodes.
 
-- [x] **7b. `Many` fast path (char-level `emit-many` impls)**
-  The run-path impls for the char-level ctors (`CharRange`,
-  `NotChar`, bare `String`, `Any`, and `Rule`/`Many` delegating per
-  the ctor table): emit the `<name>-char` set-predicate defn from the
-  child's `emit-pred` + the `read-run` wrapper with the `Token` →
-  `ParserMatch` wrap. The `Any` impl classifies its alts: ALL
-  char-level → run path over the combined `(or ...)` pred; a mixed
-  `Any` → the loop path (the default body's shape — no abort at a
-  legitimate mixed site; the `emit-pred` default abort stays the
-  emitter-bug signal at the other sites).
-  - Done when: a synthetic grammar with `Many` of a `CharRange`,
-    `Many` of a char-level Rule, and `Many` of a mixed `Any` (slow
-    path) generates a module that builds and parses a sample file
-    where each fast-path run is ONE string and the slow path yields a
-    vector of child values; zero leaks, 0 remaining nodes.
-
-- [x] **7c. `Recur` + self-recursive end-to-end (item 7 done-when)**
-  `emit-body` impl for `Recur` (a call to `(.rule ctx)` —
-  self-recursion only; the `f` field is ignored). `emit-module`
-  final form confirmed: explicit rule vector, every Rule → parser
-  defn, helpers in index-path names, main template. The self-
-  recursive mini S-expression grammar: `Any [symbol-ish (All ["("
-  (Many (Recur self)) ")"])]`.
-  - Done when: the generated module builds and parses nested input
-    to the correct vector-of-text values, with the loop terminating
-    on non-matching input; zero leaks, 0 remaining nodes.
-
-- [ ] **8. The real grammar + corpus** (IN PROGRESS — see the
-  item-8 note, UPDATE 2)
-  `emit-module` over the rules reachable from `expression` in
-  `interpreter/intrp-grammar.toc`: `expression`, `symbol`,
-  `symbol-start`, `rest-of-symbol`, `alpha`, `digits`, `int-literal`
-  (Rule name `"integer"`), `double-quoted-string`, `escaped-char`
-  (`float-literal` is no longer reachable — dropped from
-  `expression`'s alts; `upper-case` / `lower-case` are bare
-  CharRange data, not Rules — the emitter lifts them anonymously
-  under `alpha` as `alpha-0` / `alpha-1`). Generate
-  `interpreter/gen-rdr.toc`, build. Corpus: driver-held input /
-  expected-output file pairs covering: ints (AS-BUILT value shape
+- [ ] **17. The real grammar + corpus** (old item 8, re-landed on
+  v2)
+  `make gen-corpus` over the committed corpus
+  (`interpreter/gen-corpus*.toc`): ints (as-built value shape
   `[<first-digit> <rest-as-one-string>]` — the fast-path Many
-  returns one string per run: `42` → `[4 2]`, `7` → `[7 ]`; the
-  plan's `[4 [2]]` prediction was the slow-path shape — see the
-  item-8 note; floats OUT), strings with each escape
-  (`\\` `\"` `\n` `\r` `\t`), symbols incl. operator names (`+`, `*`,
-  `->`, `!x`), nested calls, empty input, and malformed lines
-  (unterminated string, bare `)`, trailing garbage after a complete
-  expression — each a separate input file because the generated
-  main exits at the first error). `make gen-corpus` runs the
-  `gen-rdr` binary over the corpus and diffs the output against the
-  expected files.
-  - Done when: every corpus case matches, zero leaks, 0 remaining
-    nodes.
+  returns one string per run: `42` → `[4 2]`, `7` → `[7 ]`; floats
+  OUT), strings with each escape (`\\` `\"` `\n` `\r` `\t`), symbols
+  incl. operator names (`+`, `*`, `->`, `!x`), nested calls, empty
+  input (prints nothing), and the malformed lines (unterminated
+  string, bare `)`, trailing garbage after a complete expression —
+  each a separate input file because the generated main exits at the
+  first error). The item-8 investigation content stands (zero-
+  length commit fixed by the owner's non-empty `int-literal`;
+  floats dropped from `expression`; the inlined-cond codegen crash
+  resolved by the grouped-literal site-(a) form — see the item-8
+  note, UPDATE 2).
+  - Done when: every corpus case matches its `-want` file, zero
+    leaks, 0 remaining nodes.
 
-- [ ] **9. Final verification**
+- [ ] **18. Final verification** (old item 9, re-landed)
   Zero leaks (malloc/free diff 0, remaining nodes 0) across: the
-  grammar library load, the emitter library load, every `emit-*`
-  driver, and the generated module over the full corpus. Every item
-  above checked. This file updated with as-built notes (deviations,
-  new hazards hit).
+  grammar library load, the emitter library load, the driver, and
+  the generated module over the full corpus. Every item above
+  checked. This file updated with the v2 as-built notes (the v1 →
+  v2 emitter delta, any output deviations — expected none — and new
+  hazards hit).
   - Done when: all items checked.
+
+

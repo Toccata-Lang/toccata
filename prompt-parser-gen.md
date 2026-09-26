@@ -8,9 +8,10 @@ You have no memory of previous runs — the plan file and the git
 history are your memory.
 
 This is a separate loop from the compiler plan's loop (`prompt.md` /
-`docs/new-compiler-plan.md`). Work only on
-`docs/parser-generator-plan.md`; never check or edit boxes in
-`docs/new-compiler-plan.md`.
+`docs/new-compiler-plan.md`). Your task list is
+`docs/parser-generator-plan.md` alone; never check or edit boxes in
+`docs/new-compiler-plan.md` (the append-only facts exception below
+applies).
 
 ## Read first (every run, in this order)
 
@@ -25,14 +26,15 @@ This is a separate loop from the compiler plan's loop (`prompt.md` /
 1. Open the task list and find the **first unchecked item**.
 2. If there is no unchecked item: print `ALL ITEMS COMPLETE` and stop.
    Do no other work.
-3. If the first unchecked item is **item 1 (OWNER DECISION)**: do not
-   implement it. Print `STOP POINT REACHED (item 1)`, then a brief
-   state report (what exists, what builds, and the specific open
-   questions: the result-discrimination pattern for the generated
-   code's site shapes (a)–(d) — options A/B/C as listed in the plan's
-   Open items — and the emitter's `Many` fast/slow classification
-   ruling), and stop. The owner decides those.
-4. Otherwise: implement **exactly that one item**.
+3. Implement **exactly that one item**.
+   - FIRST run the plan's **toolchain health gate** (its Ralph-loop
+     protocol section): `make emit-pred` must pass on the committed
+     state before you edit anything. If it fails with silent crashes
+     that survive the 5-retry rule, the window is degraded — do NOT
+     edit source to chase it; record the window state (which files
+     crash, retry counts) in the plan's **"As-built notes"**, commit
+     that note, explain it in the end-of-run report, and stop (NOT
+     `STUCK` — a degraded window is transient; the loop continues).
    - Follow the settled design in the plan file. Do not redesign. Do
      not edit the task items themselves — only check the box.
    - If you hit a genuine design gap the plan does not cover: stop,
@@ -48,20 +50,34 @@ This is a separate loop from the compiler plan's loop (`prompt.md` /
      (e.g. a `new-toc` hazard hit while building the emitter), append
      it to `docs/new-compiler-plan.md`'s **"Verified facts"** as well
      — append-only; never rewrite that file's other content.
+   - Append a brief **as-built note** for the completed item under
+     the plan's **"As-built notes"** section (what you actually
+     built, any deviation from the plan's prediction — expected none
+     — and how you verified), so item 18's final verification has
+     the v1 → v2 record to check against.
    - Check the box in `docs/parser-generator-plan.md`.
    - Commit your work (code + checkbox + any plan notes) with a
      message starting `parser-gen item N: <what changed>`.
-5. Do **not** start the next item in the same run.
+4. Do **not** start the next item in the same run.
 
 ## Standing constraints
 
 - One item per run. Small, correct, committed steps beat big leaps.
 - Never use `sudo`. Never make the `toccata` Makefile target.
-- The emitter / grammar / driver sources may use inline C freely.
+- The hand-written emitter / grammar / driver sources may use inline
+  C freely. The *generated* module (`interpreter/gen-rdr.toc`) must
+  contain NO inline C — the emitter emits pure Toccata source (the
+  plan's protocol note "NEVER generate inline code"); if an item
+  seems to require inline C in the generated output, that is
+  STUCK/owner, not a fix.
 - `new-toc` is a build crutch — its behavior is not a design
   constraint, but everything you write *and* everything you generate
   must compile and run under it.
-- Builds must be clean: zero malloc/free diff, zero remaining nodes.
+- Builds must be clean per the plan's toolchain health gate: zero
+  malloc/free diff and zero remaining nodes, subject to the
+  same-window HEAD baseline-drift exception the plan's protocol
+  defines (leak == the committed state's baseline measured in the
+  same window, recorded in the as-built note).
 - Real sources live in `interpreter/`; throwaway probes in `scratch/`
   (never committed from there). `interpreter/gen-rdr.toc` is a build
   artifact written by the driver — never commit it.
@@ -91,8 +107,7 @@ This is a separate loop from the compiler plan's loop (`prompt.md` /
 Print, in order:
 
 1. Which item you worked on (or the sentinel: `ALL ITEMS COMPLETE` /
-   `STOP POINT REACHED (item 1)` / `STUCK: <reason>` — sentinels on
-   their own line).
+   `STUCK: <reason>` — sentinels on their own line).
 2. What you changed (files).
 3. How you verified the "done when" criterion — the actual commands
    and the key output lines.

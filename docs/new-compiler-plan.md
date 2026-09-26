@@ -658,19 +658,27 @@ rules; each form's rule arrives with its phase.
   `defn` so the clause is a plain call (this is why the parse-error handling in
   the drivers lives in a `defn`, e.g. `parse-error-line`, not inline in a cond
   clause). A `let` in the ELSE clause is fine.
-- **A `reduce` closure capturing a FREE VARIABLE leaks (2026-09-01)**:
+- **A `reduce` closure capturing a FREE VARIABLE leaks (2026-09-01) —
+  RESOLVED (2026-09-26)**:
   a `reduce` whose closure captures a free variable (e.g. `cls` in
-  `count-class`) leaks term pairs on the lazy machine — over hvm-core.toc
-  (194 nodes) a single such reduce exhausts the 1MB term buffer (`Error: Not
-  enough space to allocate pair`), and 7 of them leave ~11k leaked pairs +
+  `count-class`) leaked term pairs on the lazy machine — over hvm-core.toc
+  (194 nodes) a single such reduce exhausted the 1MB term buffer (`Error: Not
+  enough space to allocate pair`), and 7 of them left ~11k leaked pairs +
   `bad result SUP pair`. A reduce with a LITERAL (no free-variable capture) is
   clean, as are reduces that only call a protocol dispatch (`top-kind`) with no
-  capture. Fix: explicit recursion passing the value as a plain parameter — the
-  same workaround as `intrp-rdr.toc`'s `threading-acc` (cf. the threading
-  verified fact). `rdr-hvmcore.toc`'s `count-class` uses `count-class-acc`
-  (explicit recursion, `cls` as a param). Verified with a staged probe: trivial
-  reduce clean, `top-kind`-dispatch reduce clean, `node-class`+literal clean,
-  `node-class`+variable-capture crashes.
+  capture. Historical fix: explicit recursion passing the value as a plain
+  parameter — the same workaround as `intrp-rdr.toc`'s `threading-acc` (cf.
+  the threading verified fact). `rdr-hvmcore.toc`'s `count-class` uses
+  `count-class-acc` (explicit recursion, `cls` as a param). Verified with a
+  staged probe: trivial reduce clean, `top-kind`-dispatch reduce clean,
+  `node-class`+literal clean, `node-class`+variable-capture crashes.
+  RESOLVED (2026-09-26): the leak no longer reproduces — a reduce whose
+  closure captures a free variable runs clean at both small scale (`[1 2 3 4
+  5]`, result 150) and 2000-element scale (result 14007000): malloc diff 0,
+  remaining nodes 0, exit 0 (probes `scratch/reduce-capture-probe.toc` /
+  `-probe2.toc`, built with `-DCHECK_MEM_LEAK=1 -DSAFETY=1 -DSTATS=1`). The
+  explicit-recursion workaround is no longer REQUIRED; existing `-acc` code
+  remains valid.
 - **Driver: `interpreter/rdr-hvmcore.toc` (2026-09-01)**: the reader
   acceptance driver. `slurp`s hvm-core.toc (inline-C whole-file read, same as
   `rdr-top.toc`), runs `parse-program`, and checks: the result is a
