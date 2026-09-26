@@ -1116,7 +1116,34 @@ generated code)**
   char-level`, `alpha Rule char-level`, `symbol-start Rule
   char-level`, `expression Rule not-char-level`, with the pred
   lines matching `interpreter/emit-want/{digits,alpha,symbol-}
-  start}.txt`; then check the box.
+  start}.txt`; then check the box. UPDATE 6 (2026-09-26, sixth run):
+  the run-start gate PASSED — first attempt segfaulted (exit 139
+  after clean loads; transient, retry rule) and the next 3/3 passed
+  clean (exit 0, all 13 diffs byte-identical, malloc diff 0,
+  remaining nodes 0). The `get` sanity probe (temporary scratch
+  file, self-contained) printed `yes nono` 3/3 (exit 0, diff 0,
+  remaining 0): check 1 `(yn (= (get [1 2] 0) 1))` → `yes` (int
+  get healthy), check 2 `(yn (str= (get ["x" "y"] 0) "x"))` →
+  `no` (string get broken, as in UPDATE 4/5), and the CONTROL
+  `(yn (= 1 1))` → `no` — NEW symptom: in UPDATE 5 the same
+  control printed `yes`, so the drift has widened from
+  `get`-over-vectors to `=`/`str=`/`cond`-over-Maybe in this
+  probe's layout (the gate binary's layout is unaffected — 13/13).
+  The fold health probe (separate scratch file) silent-aborted 134
+  with NO output 3/3 (`str-vect` / `map` dead, as in UPDATE
+  2/3/5). The 4-node classification probe was NOT run (it needs
+  both `get` over the IR's `data`/`pred` vectors and the
+  fold/`map` path — both dead; it would abort by construction).
+  Per the degraded-window protocol: NO source edited (the two-pass
+  source is correct and gate-verified); the 4-node classification
+  probe stays PENDING a healthy window. Box stays UNCHECKED.
+  Window state: `new-toc` 2026-09-09 19:10 binary (unchanged);
+  memory healthy (40GB available). NEXT RUN: same protocol as
+  UPDATE 5 — (1) the gate; (2) the `get` sanity probe INCLUDING
+  the `(yn (= 1 1))` control (all three must print `yes` — the
+  control guards against the new `=`/`cond` drift); (3) the fold
+  health probe; (4) if both healthy, the 4-node probe (recipe
+  above); then check the box.
 
 - Rewrite decision (2026-09-26): the owner judged the v1 emitter
   horrible — its explicit-recursion / `-acc` threading shape exists
