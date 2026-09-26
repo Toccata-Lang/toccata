@@ -1085,6 +1085,38 @@ generated code)**
   new-toc codegen 5/5 (silent abort, no error message) — the
   identical content inside `intrp-emit.toc` builds fine; do NOT
   inline that content in probes.
+  UPDATE 5 (2026-09-26, fifth run): the run-start gate PASSED
+  clean — `make emit-pred` exit 0, all 13 diffs byte-identical,
+  malloc diff 0, remaining nodes 0 (re-verified twice). The
+  `get` sanity probe FAILED exactly as in UPDATE 4: `(pr* (yn
+  (= (get [1 2] 0) 1)))` and `(pr* (yn (str= (get ["x" "y"] 0)
+  "x")))` both print `no` (deterministic 3/3, one build), and
+  `(type-name (get [1 2] 0))` / `(type-name (get ["x" "y"] 0))`
+  both print `Some` — while the same binary's controls `(yn (= 1
+  1))` and `(yn (str= "x" "x"))` print `yes` (so `=` / `str=` /
+  `cond` are healthy; the miscompile is confined to `get` over
+  vectors, as in UPDATE 4). The fold health probe FAILED again:
+  `(pr* (str-vect "hello"))` silent-aborts 3/3 (exit 134, no
+  error message — the core `str-vect` path is dead, matching
+  UPDATE 2/3), and `(pr* (str-vect (map ["a" "b"] identity)))`
+  silent-aborts 3/3. The 4-node classification probe was NOT run
+  (it needs both the fold/`map` path and `get` over the IR's
+  `data`/`pred` vectors — both dead; it would abort by
+  construction). Per the degraded-window protocol: NO source
+  edited (the two-pass source is correct and gate-verified);
+  the 4-node classification probe stays PENDING a healthy
+  window. Box stays UNCHECKED. Window state: `new-toc`
+  2026-09-09 19:10 binary; memory healthy (41GB available).
+  NEXT RUN: same protocol as UPDATE 4 — (1) the gate; (2) the
+  `get` sanity probe (both yn checks must print `yes`); (3) if
+  `get` is healthy, the fold health probe (`(pr* (str-vect
+  "hello"))` must print `hello` and `(pr* (str-vect (map ["a"
+  "b"] identity)))` must print `[a b]`); (4) if both healthy, the
+  4-node probe (recipe above) — expected: `digits Rule
+  char-level`, `alpha Rule char-level`, `symbol-start Rule
+  char-level`, `expression Rule not-char-level`, with the pred
+  lines matching `interpreter/emit-want/{digits,alpha,symbol-}
+  start}.txt`; then check the box.
 
 - Rewrite decision (2026-09-26): the owner judged the v1 emitter
   horrible — its explicit-recursion / `-acc` threading shape exists
