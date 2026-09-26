@@ -72,6 +72,7 @@
 (def all-alts-char-level?)
 (def contains-recur?)
 (def analyze)
+(def fill-preds)
 
 ;; Context threaded through every emit call:
 ;;   rule   — name of the rule currently being emitted ("" at top
@@ -1108,22 +1109,25 @@
             (and acc (.char-level? ir)))))
 
 ;; ir-char-range / ir-not-char / ir-string: the leaf ctors — recurse
-;; leaves them raw, so the fields are the grammar's raw values. The
-;; pred line is the Ctor table's emit-pred column, built here
-;; bottom-up (byte-identical to the v1 emit-pred impls — item 11's
-;; oracle ties the two).
+;; leaves them raw, so the fields are the grammar's raw values.
+;; PASS 1 (the fold) builds NO pred strings — the pred field is []
+;; and pass 2 (fill-preds) materializes the line. Reason: to-str
+;; (in-place string construction) over a SUPERPOSED value aborts
+;; inside the fold's shared-body closure (incomplete result — the
+;; closure-capture SUP family; the 2026-09-26 item-10 fourth-run
+;; bisection: the to-str-free shape classified alpha clean 3/3
+;; while every to-str shape aborted 25+ runs). Pass 2 runs on the
+;; fold's plain result, where to-str is safe.
 (defn ir-char-range [v]
   (NodeIR "CharRange"
           (Some None)
-          [(to-str ["(and (<= " (number-str (char-code (.lower v)))
-                 " (char-code c)) (<= (char-code c) "
-                 (number-str (char-code (.upper v))) "))"])]
+          []
           [(.lower v) (.upper v)]))
 
 (defn ir-not-char [v]
   (NodeIR "NotChar"
           (Some None)
-          [(to-str ["(not (str= c " (render-literal (.char v)) "))"])]
+          []
           [(.char v)]))
 
 ;; One-char String: char-level (the Ctor table's bare-String pred);
@@ -1132,7 +1136,7 @@
   (cond (= (count v) 1)
     (NodeIR "String"
             (Some None)
-            [(to-str ["(str= c " (render-literal v) ")"])]
+            []
             [v])
 
     (NodeIR "String"
@@ -1142,18 +1146,18 @@
 
 ;; ir-any / ir-all / ir-many / ir-rule / ir-ignore: the container
 ;; ctors — recurse reassembled them, so the fields hold the
-;; children's NodeIRs (h knows which by ctor). Any's combined pred
-;; reads its alts' pred fields; Rule / Many delegate the flag and the
-;; pred to their child (ctor table); All / Ignore are never
-;; char-level. The ir-any / ir-any-dispatch split (the let-
-;; wrapping-cond codegen hazard — a let wrapping a cond miscompiles
-;; at runtime in some C layouts, the item-6 fact): the parsers
-;; vector is passed as a parameter so the cond is flat.
+;; children's NodeIRs (h knows which by ctor). Any's flag is the
+;; reduce over its alts' flags; Rule / Many delegate the flag (and
+;; the pred, which pass 1 leaves []) to their child (ctor table);
+;; All / Ignore are never char-level. The ir-any / ir-any-dispatch
+;; split (the let-wrapping-cond codegen hazard — a let wrapping a
+;; cond miscompiles at runtime in some C layouts, the item-6 fact):
+;; the parsers vector is passed as a parameter so the cond is flat.
 (defn ir-any-dispatch [cs]
   (cond (all-ir-char-level? cs)
     (NodeIR "Any"
             (Some None)
-            [(to-str ["(or " (ir-join-preds cs) ")"])]
+            []
             cs)
 
     (NodeIR "Any"
@@ -1254,11 +1258,152 @@
 (defn h [v]
   (h-dispatch (type-name v) v))
 
+;; --- Item 10 pass 2: fill-preds (pred materialization) ----------
+;;
+;; The fold (pass 1) leaves every pred field [] — to-str over a
+;; superposed value aborts inside the fold's shared-body closure
+;; (see the ir-char-range comment). fill-preds walks the fold's
+;; PLAIN result (no superposition left) and rebuilds each node with
+;; its pred line materialized: the Ctor table's emit-pred column,
+;; byte-identical to the v1 emit-pred impls (item 11's oracle ties
+;; the two). The leaf lines come from the *-pred-line helpers
+;; (to-str over plain values — safe here). Containers recurse into
+;; their child IRs first; Any's (or ...) reads its alts' filled
+;; pred fields; Rule / Many copy the filled child's flag + pred.
+;; fill-preds is forward-declared at the top of the file (the
+;; (def name) idiom): the fill-* helpers reference it before its
+;; definition.
+
+;; char-range-pred-line [lo hi]: the CharRange pred line (the Ctor
+;; table's emit-pred column).
+(defn char-range-pred-line [lo hi]
+  (to-str ["(and (<= " (number-str (char-code lo))
+         " (char-code c)) (<= (char-code c) "
+         (number-str (char-code hi)) "))"]))
+
+;; fill-char-range [ir]: rebuild the fold's CharRange IR with the
+;; pred line (the data is the raw [lo hi]).
+(defn fill-char-range [ir]
+  (let [d (.data ir)]
+    (NodeIR "CharRange"
+            (Some None)
+            (conj [] (char-range-pred-line (get d 0) (get d 1)))
+            d)))
+
+(defn not-char-pred-line [ch]
+  (to-str ["(not (str= c " (render-literal ch) "))"]))
+
+(defn fill-not-char [ir]
+  (let [d (.data ir)]
+    (NodeIR "NotChar"
+            (Some None)
+            (conj [] (not-char-pred-line (get d 0)))
+            d)))
+
+(defn string-pred-line [lit]
+  (to-str ["(str= c " (render-literal lit) ")"]))
+
+;; The fill-string / fill-string-dispatch split (the flat-cond
+;; convention — a let wrapping a cond miscompiles, the item-6 fact).
+(defn fill-string-dispatch [lit ir]
+  (cond (.char-level? ir)
+    (NodeIR "String"
+            (Some None)
+            (conj [] (string-pred-line lit))
+            (.data ir))
+
+    ir))
+
+(defn fill-string [ir]
+  (fill-string-dispatch (get (.data ir) 0) ir))
+
+(defn any-pred-line [cs]
+  (to-str ["(or " (ir-join-preds cs) ")"]))
+
+(defn fill-any-dispatch [cs]
+  (cond (all-ir-char-level? cs)
+    (NodeIR "Any"
+            (Some None)
+            (conj [] (any-pred-line cs))
+            cs)
+
+    (NodeIR "Any"
+            None
+            []
+            cs)))
+
+;; The children are filled first (the forward reference to
+;; fill-preds).
+(defn fill-any [ir]
+  (fill-any-dispatch (map (.data ir) fill-preds)))
+
+(defn fill-all [ir]
+  (NodeIR "All"
+          None
+          []
+          (map (.data ir) fill-preds)))
+
+(defn fill-many [ir]
+  (let [c (fill-preds (get (.data ir) 0))]
+    (NodeIR "Many"
+            (.char-level? c)
+            (.pred c)
+            [c])))
+
+(defn fill-rule [ir]
+  (let [d (.data ir)
+        c (fill-preds (get d 1))]
+    (NodeIR "Rule"
+            (.char-level? c)
+            (.pred c)
+            [(get d 0) c])))
+
+(defn fill-ignore [ir]
+  (NodeIR "Ignore"
+          None
+          []
+          [(fill-preds (get (.data ir) 0))]))
+
+;; fill-preds-dispatch / fill-preds: the pass-2 entry. The no-pred
+;; leaves (AlwaysSucceed / Error / Recur) pass through unchanged
+;; (the else clause).
+(defn fill-preds-dispatch [k ir]
+  (cond (str= k "CharRange")
+    (fill-char-range ir)
+
+    (str= k "NotChar")
+    (fill-not-char ir)
+
+    (str= k "String")
+    (fill-string ir)
+
+    (str= k "Any")
+    (fill-any ir)
+
+    (str= k "All")
+    (fill-all ir)
+
+    (str= k "Many")
+    (fill-many ir)
+
+    (str= k "Rule")
+    (fill-rule ir)
+
+    (str= k "Ignore")
+    (fill-ignore ir)
+
+    ir))
+
+(defn fill-preds [ir]
+  (fill-preds-dispatch (.kind ir) ir))
+
 ;; analyze [pc]: the phase-1 catamorphism — the core fold over the
-;; combinator's recurse impls (hvm-core.toc:587). -> NodeIR
+;; combinator's recurse impls (hvm-core.toc:587), then pass 2
+;; (fill-preds) materializes the pred lines on the plain result.
+;; -> NodeIR
 ;;
 ;; Forward-declared at the top of the file: it is the file's LAST
 ;; defn, and new-toc's symbol-loss race drops a module's last defn
 ;; from the symbol table (the importer then fails Undefined symbol).
 (defn analyze [pc]
-  (fold pc h))
+  (fill-preds (fold pc h)))

@@ -1007,7 +1007,84 @@ generated code)**
   before trusting any fold result; if the fold path is still dead,
   record the window state again and stop (not STUCK); if it is
   healthy, run the 4-node classification probe + `make emit-pred`
-  13/13 + zero leaks to close the done-when.
+  13/13 + zero leaks to close the done-when. UPDATE 4 (2026-09-26,
+  fourth run): the run-start gate PASSED (exit 0, 13/13
+  byte-identical, malloc diff 0, remaining 0). Window state: at
+  start `str-vect` and the minimal capturing-closure `map` were
+  dead (5/5 silent abort); BOTH recovered mid-run (they then ran
+  clean) — the window is drifting, not static. The fold-through-
+  real-`h` path stayed dead all run: digits clean 3/3 (repeated),
+  `alpha` / `symbol-start` / `expression` aborted deterministically
+  with `Incomplete result at runtime3.c:3396` (25+ runs across 5+
+  independent binaries and 6+ rebuilds). BISECTION (temporary
+  probes, all deleted before commit): core `fold` with `identity`
+  clean; staged `h` bodies — constant / type-name / literal-NodeIR
+  stages clean, the first stage touching `.parsers` + the
+  `all-ir-char-level?` reduce aborts; `ir-rule` under the Any fold
+  clean; `ir-char-range` under the Any fold aborts; the data-only
+  `ir-char-range` (two field accesses, NO pred to-str) clean;
+  parameter use-count (3x / 4x / nested `char-code`) all clean;
+  DECISIVE: `ir-char-range` with the pred's to-str REMOVED (pred =
+  `(conj [] (number-str (char-code lo)))`) classified `alpha` clean
+  3/3 (`alpha Rule char-level`). CONCLUSION: `to-str` (in-place
+  string construction) over a SUPERPOSED value inside the fold's
+  shared-body closure is the trigger — the force-erase asymmetry,
+  the closure-capture SUP family. DESIGN FIX (implemented this
+  run, committed): the TWO-PASS design — pass 1 (the fold's `h`)
+  leaves every `pred` field `[]`; pass 2 (`fill-preds`, a plain
+  recursion over the fold's result — no superposition left)
+  materializes the pred lines via the `*-pred-line` helpers
+  (`to-str` over PLAIN values, safe); `analyze` = `(fill-preds
+  (fold pc h))`. `fill-preds` is forward-declared at the top of the
+  file (the `(def name)` idiom, like `analyze`). Gate on the
+  two-pass source: PASSES (exit 0, 13/13 byte-identical, malloc
+  diff 0, remaining 0) — but the gate only loads the module and
+  runs the v1 path; it does not execute v2. The 4-node probe on
+  the two-pass source is BLOCKED by a NEW window degradation:
+  `get` on vectors is MISCOMPILED in the probe binaries —
+  `(get [1 2] 0)`, `(get ["x" "y"] 0)`, `(get (conj [] "x") 0)`
+  and a global-vector get all return values whose `type-name` is
+  `Some` (while bare `(type-name "hello")` = `String` and the
+  NodeIR field accessors `.kind` / `.char-level?` / `.pred` /
+  `.data` all read correctly); one build even emitted malformed C
+  for `get` (unclosed `makePair` in `glblget1306`, clang error).
+  5/5 probe rebuilds gave the same failures: digits / alpha →
+  `No implementation of '.kind' found for type Some (43)` at
+  `fill-preds` (fed garbage by the miscompiled `get`),
+  symbol-start / expression → `Incomplete result`. v1 uses
+  `get` / `first` pervasively (~15 sites) and the gate passes
+  13/13, so `get` works in the gate binary's layout — the
+  miscompile is probe-layout / window-specific. Consequence: the
+  two-pass `fill-preds` (which reads the `data` / `pred` vectors
+  via `get`) cannot be runtime-verified in this window; the
+  earlier "data field is Some" reading was an artifact of the
+  miscompiled `get`, not real data corruption. Box stays
+  UNCHECKED; the two-pass source IS committed (gate-verified, and
+  it removes the only proven runtime trigger from `h` — the
+  single-pass alternative is proven to abort in this window).
+  NEXT RUN: (1) the gate; (2) a `get` sanity probe — a temporary
+  probe printing `(yn (= (get [1 2] 0) 1))` and `(yn (str= (get
+  ["x" "y"] 0) "x"))` (both must print `yes`; `yn` = `(fn [b]
+  (cond b "yes" "no"))`); if either is `no` or aborts, the window
+  is still degraded — record and stop (not STUCK); (3) if `get`
+  is healthy, the 4-node probe (recipe below) — expected: `digits
+  Rule char-level`, `alpha Rule char-level`, `symbol-start Rule
+  char-level`, `expression Rule not-char-level`, with the pred
+  lines matching `interpreter/emit-want/{digits,alpha,symbol-
+  start}.txt`; then check the box. Probe recipe (temporary
+  interpreter-side file, deleted before commit): add-ns grammar
+  + emit; `show [name pc]` = `(let [ir (emit/analyze pc)] (pr*
+  (to-str [name " " (.kind ir) " " (cl-str (.char-level? ir))
+  " " (pred-str (.pred ir))])))` where `cl-str` maps Some/
+  None to `char-level` / `not-char-level` and `pred-str` prints
+  `-` for an empty pred else `(extract (get p 0))`; `pick` on
+  `(extract (get argv 1))` dispatches to the four grammar nodes.
+  PROBE-CONSTRUCTION HAZARD (this window): a probe file that
+  contains the pred-to-str content (a `to-str` over a vector
+  literal with nested `char-code` / `number-str` calls) crashes
+  new-toc codegen 5/5 (silent abort, no error message) — the
+  identical content inside `intrp-emit.toc` builds fine; do NOT
+  inline that content in probes.
 
 - Rewrite decision (2026-09-26): the owner judged the v1 emitter
   horrible — its explicit-recursion / `-acc` threading shape exists
