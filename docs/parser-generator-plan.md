@@ -470,6 +470,32 @@ Curated for this project; the source of truth is the compiler plan.
   Related: a let directly in a NON-ELSE cond clause is REJECTED at
   load as a malformed cond — the branches must be plain calls (helper
   defns), as in `any-body-acc`.
+- let-wrapping-cond miscompiles with NON-LET clauses too, when the
+  defn is called through the core `fold` (2026-09-26, item 10):
+  extends the item-6 fact above — the trigger is not limited to
+  both-lets clauses. In the item-10 emitter v2 foundation, `(defn h
+  [v] (let [k (type-name v)] (cond (str= k "X") ... — 11 flat
+  string-compare clauses, plain-call values ...)))` loaded clean but
+  aborted at runtime with `Compiler screwed up. Incomplete result.
+  at runtime3.c:3396` (result tag SUB) when `h` was called through
+  the core `fold` (hvm-core.toc:587) over a 2-child `Any` —
+  deterministic 3/3. Bisected: the SAME fold with a flat-cond `h`
+  (no let — the type name passed as a parameter to a dispatcher
+  defn) ran clean (exit 0, diff 0, remaining 0); a 1-child `Any`
+  fold through the let-wrapped `h` also ran clean — the miscompile
+  is C-layout-dependent, like the other codegen hazards. Fix (shape
+  verified by the bisection; full re-verification pending a healthy
+  window): pass the discriminated value as a parameter — `(defn h
+  [v] (h-dispatch (type-name v) v))` with the flat-cond
+  `h-dispatch [k v]`; the same split for any other let-over-cond
+  (the item-10 `ir-any` → `ir-any-dispatch [cs]`). Related
+  observation: the runtime's C `typeName()` (runtime3.c) PRINTS
+  `typeName: <name>` to stdout on every call — the `type-name`
+  protocol output is the source of the drivers' noisy stdout; it is
+  harmless (driver output files are written via fopen, not stdout).
+  Cost note: each `type-name` call is a protocol dispatch + a print,
+  so dispatch-once-per-node (the parameter split) beats inlining
+  `(type-name v)` in every cond test.
 - new-toc codegen drops a call arg (2026-09-09, item 6): in
   `any-body-step` (let of 3 bindings incl. a protocol call; body a
   4-arg call whose 1st arg is a nested 2-arg `append-acc`), the 2nd
@@ -870,6 +896,49 @@ generated code)**
 - Never touch the `toccata` Makefile target. Never `sudo`.
 
 **As-built notes**
+
+- Item 10 (2026-09-26, PARTIAL — box UNCHECKED, window degraded
+  mid-run): the v2 foundation is ADDED to `interpreter/intrp-emit.toc`
+  (the v1 paths are untouched, per the incremental-swap protocol):
+  the `NodeIR` deftype `[kind char-level? pred data]` (no `!`
+  annotations), the per-ctor IR constructors (`ir-char-range` /
+  `ir-not-char` / `ir-string` / `ir-any` / `ir-all` / `ir-many` /
+  `ir-rule` / `ir-ignore` / `ir-always-succeed` / `ir-error` /
+  `ir-recur` — the pred line is built bottom-up, byte-identical to
+  the v1 `emit-pred` impls by construction; `ir-join-preds` /
+  `all-ir-char-level?` are `reduce`s — the reduce-capture leak is
+  RESOLVED and the style guide says fold-not--acc), `h` (dispatches
+  on `type-name`; split into `h-dispatch [k v]` per the new
+  let-wrapping-cond fact), and `analyze [pc]` = `(fold pc h)`;
+  `analyze` is forward-declared at the top of the file (the last-
+  defn symbol-loss race). Verified BEFORE the window degraded: the
+  library loads clean (`*** Loaded interpreter/intrp-emit.toc`,
+  exit 134 clean-load path, no error lines); a temporary
+  interpreter-side probe (deleted before this commit) ran `analyze
+  grammar/digits` (printed `kind=Rule`, exit 0, malloc diff 0,
+  remaining nodes 0) and a 1-child `Any` fold (printed `kind=Any`,
+  clean); `ir-join-preds` / `all-ir-char-level?` ran clean
+  standalone over two IRs (the join printed the two CharRange
+  preds space-joined; the all-check printed `(Some None)`). The
+  2-child `Any` fold initially aborted (the incomplete-result
+  crash) — diagnosed as the let-wrapping-cond miscompile (the new
+  fact above) and fixed by the flat-cond splits. PENDING a healthy
+  window: the full 4-node classification probe (`digits` /
+  `alpha` / `symbol-start` char-level; `expression` NOT
+  char-level) and `make emit-pred` (all 13 diffs) on the edited
+  source. Window state at stop: the committed driver
+  `interpreter/emit-pred.toc` crashed 6/6 (silent abort, no error
+  message — it passed the run-start gate ~25 min earlier), the
+  digits probe 9/9, the edited library 2/3 (one clean exit-0
+  load), a trivial `(main [_] 0)` built 3/3; memory healthy
+  (33GB available). NEXT RUN: re-run the gate; recreate the probe
+  (a temporary interpreter-side file that add-ns's grammar + emit,
+  folds `grammar/digits`, `grammar/alpha`, `grammar/symbol-start`,
+  `grammar/expression` through `emit/analyze`, and prints
+  `<kind> <char-level|not-char-level>` per node — `pr*` takes one
+  string and returns I60 0, threadable through `+`); verify the
+  done-when (4 classifications + `make emit-pred` 13/13 + zero
+  leaks).
 
 - Rewrite decision (2026-09-26): the owner judged the v1 emitter
   horrible — its explicit-recursion / `-acc` threading shape exists

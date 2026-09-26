@@ -52,6 +52,13 @@
 ;; data the emitter ignores), and the child-position treatment:
 ;; Recur is referenced by the rule name in call position (like Rule)
 ;; — never lifted, no helper defn.
+;;
+;; Item 10 (emitter v2): NodeIR + analyze — phase 1 of the fold-
+;; based rewrite (the plan's Settled v2 API): the grammar combinator
+;; is analyzed into a NodeIR by ONE fold over the core recursion
+;; scheme (hvm-core.toc fold, over the ParserCombinator recurse
+;; impls). The v1 entry points stay on their v1 bodies until items
+;; 11-15 replace them.
 
 (add-ns grammar (module "intrp-grammar.toc"))
 (add-ns rdr (module "intrp-rdr.toc"))
@@ -64,6 +71,7 @@
 (def lifted-child-block)
 (def all-alts-char-level?)
 (def contains-recur?)
+(def analyze)
 
 ;; Context threaded through every emit call:
 ;;   rule   — name of the rule currently being emitted ("" at top
@@ -1035,3 +1043,222 @@
 (defn emit-module [rules entry]
   (let [hdr (append-acc (emit-header) (rule-decls rules))]
     (append-acc (emit-rules-acc hdr rules) (emit-main entry))))
+
+;; --- Item 10: NodeIR + analyze (the fold) --------------------------
+;;
+;; Emitter v2 phase 1 (the plan's Settled v2 API): the grammar
+;; combinator is analyzed into a NodeIR by ONE fold over the core
+;; recursion scheme (hvm-core.toc:587, over the ParserCombinator
+;; recurse impls — no new walker). h dispatches on type-name: after
+;; recurse reassembles a node, the CONTAINER ctors' (All, Any, Many,
+;; Rule, Ignore) fields hold the children's NodeIRs while the LEAF
+;; ctors (CharRange, NotChar, String, AlwaysSucceed, Error, Recur)
+;; hold their raw fields — h knows which by ctor. Recur is a
+;; recurse-leaf, so the fold terminates structurally even though the
+;; generated parser is recursive. The IR is classification +
+;; structure: the char-level? flag is computed BOTTOM-UP (the v1
+;; alt-char-level? / all-alts-char-level? pre-passes are superseded
+;; by it), the pred field carries the char-predicate source line
+;; (the Ctor table's emit-pred column, built bottom-up — an Any's
+;; (or ...) reads its alts' pred fields), and the data field carries
+;; the ctor-specific raw fields or child IRs. NO helper names, NO
+;; generated source beyond the predicate line: the render phase
+;; (items 11-15) walks the IR top-down. The v1 entry points
+;; (emit-pred / emit-module and their bodies) stay on their v1 bodies
+;; until items 11-15 replace them; the driver is one binary and must
+;; pass at every step.
+
+;; NodeIR: the analyzed node. No ! annotations (new-toc hazard on
+;; multi-field ctors).
+;;   kind        — the bare ctor name ("All", "Many", "CharRange",
+;;                 "NotChar", "Error", "AlwaysSucceed", "Ignore",
+;;                 "Rule", "Recur"), or "String" for a bare string
+;;                 literal
+;;   char-level? — Some None iff this node classifies a single char:
+;;                 CharRange / NotChar / one-char String; Any iff ALL
+;;                 alts char-level; Rule / Many iff the child is;
+;;                 All / Ignore never
+;;   pred        — [String] char-predicate source line over char
+;;                 string c (char-level nodes only; [] otherwise)
+;;   data        — ctor-specific: CharRange [lo hi]; NotChar [ch];
+;;                 String [lit]; Error [msg]; AlwaysSucceed [v];
+;;                 All / Any [NodeIR ...]; Many / Ignore [NodeIR];
+;;                 Rule [name NodeIR]; Recur []
+(deftype NodeIR [kind char-level? pred data])
+
+;; ir-join-preds [irs]: the pred lines of the char-level IRs irs
+;; joined with single spaces (no trailing space) — an Any's (or ...)
+;; interior. A reduce (the reduce-capture leak is RESOLVED — the
+;; style guide's fold-not--acc rule).
+(defn ir-join-preds [irs]
+  (reduce irs ""
+          (fn [acc ir]
+            (cond (str= acc "")
+              (extract (first (.pred ir)))
+
+              (to-str [acc " " (extract (first (.pred ir)))])))))
+
+;; all-ir-char-level? [irs]: Some None iff every IR in irs is
+;; char-level (a reduce over the flags — the v1
+;; all-alts-char-level? / alt-char-level? pre-pass, bottom-up on the
+;; IR instead of the combinator).
+(defn all-ir-char-level? [irs]
+  (reduce irs (Some None)
+          (fn [acc ir]
+            (and acc (.char-level? ir)))))
+
+;; ir-char-range / ir-not-char / ir-string: the leaf ctors — recurse
+;; leaves them raw, so the fields are the grammar's raw values. The
+;; pred line is the Ctor table's emit-pred column, built here
+;; bottom-up (byte-identical to the v1 emit-pred impls — item 11's
+;; oracle ties the two).
+(defn ir-char-range [v]
+  (NodeIR "CharRange"
+          (Some None)
+          [(to-str ["(and (<= " (number-str (char-code (.lower v)))
+                 " (char-code c)) (<= (char-code c) "
+                 (number-str (char-code (.upper v))) "))"])]
+          [(.lower v) (.upper v)]))
+
+(defn ir-not-char [v]
+  (NodeIR "NotChar"
+          (Some None)
+          [(to-str ["(not (str= c " (render-literal (.char v)) "))"])]
+          [(.char v)]))
+
+;; One-char String: char-level (the Ctor table's bare-String pred);
+;; a longer literal is not char-level (no grammar node is one).
+(defn ir-string [v]
+  (cond (= (count v) 1)
+    (NodeIR "String"
+            (Some None)
+            [(to-str ["(str= c " (render-literal v) ")"])]
+            [v])
+
+    (NodeIR "String"
+            None
+            []
+            [v])))
+
+;; ir-any / ir-all / ir-many / ir-rule / ir-ignore: the container
+;; ctors — recurse reassembled them, so the fields hold the
+;; children's NodeIRs (h knows which by ctor). Any's combined pred
+;; reads its alts' pred fields; Rule / Many delegate the flag and the
+;; pred to their child (ctor table); All / Ignore are never
+;; char-level. The ir-any / ir-any-dispatch split (the let-
+;; wrapping-cond codegen hazard — a let wrapping a cond miscompiles
+;; at runtime in some C layouts, the item-6 fact): the parsers
+;; vector is passed as a parameter so the cond is flat.
+(defn ir-any [v]
+  (ir-any-dispatch (.parsers v)))
+
+(defn ir-any-dispatch [cs]
+  (cond (all-ir-char-level? cs)
+    (NodeIR "Any"
+            (Some None)
+            [(to-str ["(or " (ir-join-preds cs) ")"])]
+            cs)
+
+    (NodeIR "Any"
+            None
+            []
+            cs)))
+
+(defn ir-all [v]
+  (NodeIR "All"
+          None
+          []
+          (.parsers v)))
+
+(defn ir-many [v]
+  (let [c (.parser v)]
+    (NodeIR "Many"
+            (.char-level? c)
+            (.pred c)
+            [c])))
+
+(defn ir-rule [v]
+  (let [c (.parser v)]
+    (NodeIR "Rule"
+            (.char-level? c)
+            (.pred c)
+            [(.name v) c])))
+
+(defn ir-ignore [v]
+  (NodeIR "Ignore"
+          None
+          []
+          [(.parser v)]))
+
+(defn ir-always-succeed [v]
+  (NodeIR "AlwaysSucceed"
+          None
+          []
+          [(.value v)]))
+
+(defn ir-error [v]
+  (NodeIR "Error"
+          None
+          []
+          [(.msg v)]))
+
+(defn ir-recur [v]
+  (NodeIR "Recur"
+          None
+          []
+          []))
+
+;; h: the fold's ONE function (the plan's Settled v2 API) — dispatch
+;; on type-name over the recurse-reassembled node. The type name is
+;; passed to h-dispatch as a parameter (NOT let-bound over the cond —
+;; a let wrapping a cond miscompiles at runtime in some C layouts,
+;; the item-6 fact; a 2-child Any fold aborted with an incomplete
+;; result while the flat-cond shape ran clean, 2026-09-26, item 10).
+;; The clauses are plain calls (the malformed-cond hazard).
+(defn h [v]
+  (h-dispatch (type-name v) v))
+
+(defn h-dispatch [k v]
+  (cond (str= k "CharRange")
+    (ir-char-range v)
+
+    (str= k "NotChar")
+    (ir-not-char v)
+
+    (str= k "String")
+    (ir-string v)
+
+    (str= k "Any")
+    (ir-any v)
+
+    (str= k "All")
+    (ir-all v)
+
+    (str= k "Many")
+    (ir-many v)
+
+    (str= k "Rule")
+    (ir-rule v)
+
+    (str= k "Ignore")
+    (ir-ignore v)
+
+    (str= k "AlwaysSucceed")
+    (ir-always-succeed v)
+
+    (str= k "Error")
+    (ir-error v)
+
+    (str= k "Recur")
+    (ir-recur v)
+
+    (abort (to-str ["analyze: unknown node: " k]))))
+
+;; analyze [pc]: the phase-1 catamorphism — the core fold over the
+;; combinator's recurse impls (hvm-core.toc:587). -> NodeIR
+;;
+;; Forward-declared at the top of the file: it is the file's LAST
+;; defn, and new-toc's symbol-loss race drops a module's last defn
+;; from the symbol table (the importer then fails Undefined symbol).
+(defn analyze [pc]
+  (fold pc h))
