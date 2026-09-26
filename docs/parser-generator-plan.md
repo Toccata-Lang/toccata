@@ -984,6 +984,30 @@ generated code)**
   before trusting any fold result; then the 4-node classification
   probe (digits already verified — `alpha` / `symbol-start` /
   `expression` remain) + `make emit-pred` 13/13 + zero leaks.
+  UPDATE 3 (2026-09-26, third run): the run-start gate PASSED
+  clean — `make emit-pred` exit 0, all 13 diffs byte-identical,
+  malloc diff 0, remaining nodes 0. The fold health probe FAILED
+  in exactly the same way as the previous run's UPDATE 2: minimal
+  probes `(pr* (str-vect "hello"))` and `(pr* (map ["a" "b"]
+  identity))` both silently abort 3/3 (the core Vector `map` /
+  `str-vect` paths are dead in this window, no grammar or emitter
+  involved), and the full 4-node classification probe aborts 3/3
+  with `Incomplete result at runtime3.c:3396` (it needs the core
+  Vector `map` via the `Any` `recurse` impl). The digits-only
+  control (`emit/analyze grammar/digits`) is clean 3/3 — prints
+  `digits char-level`, exit 0, malloc diff 0, remaining 0 — so the
+  degradation is confined to the `map`/`str-vect`/`flat-map`
+  paths, matching UPDATE 2 exactly. Per the degraded-window
+  protocol: NO source edited (the source is correct and the gate
+  + digits control both pass); the 4-node classification probe and
+  the remaining `alpha`/`symbol-start`/`expression` classifications
+  stay PENDING a healthy window. Box stays UNCHECKED. NEXT RUN:
+  re-run the gate AND the fold health probe
+  (`(pr* (map ["a" "b"] identity))` must print `[a b]` clean)
+  before trusting any fold result; if the fold path is still dead,
+  record the window state again and stop (not STUCK); if it is
+  healthy, run the 4-node classification probe + `make emit-pred`
+  13/13 + zero leaks to close the done-when.
 
 - Rewrite decision (2026-09-26): the owner judged the v1 emitter
   horrible — its explicit-recursion / `-acc` threading shape exists
