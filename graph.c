@@ -38,8 +38,8 @@ unsigned downBranch(Term tree, unsigned pt, unsigned graphNum, unsigned nodeNum)
       branch = val;
     } else {
       fprintf(dotFile, "x%d_%x:%s -- x%d_%x:%s\n",
-	      graphNum, nodeNum, branchPort, graphNum, termLoc(branch),
-	      termLoc(branch) & -1 ? "sw" : "se");
+	      graphNum, nodeNum, branchPort, graphNum, (termLoc(branch) & 0xFFFFFFFE),
+	      (termLoc(branch) & 1) ? "se" : "sw");
       return termLoc(branch);
     }
   }

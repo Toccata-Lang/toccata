@@ -1144,22 +1144,38 @@ void dupSup(Term dup, Term sup) {
       // Expansion: take SUP aux ports
       Term x = take(portLoc(1, sup));
       Term y = take(portLoc(2, sup));
+      Tag xVar = termTag(x) == VAR;
+      Tag yVar = termTag(y) == VAR;
 
-      // x,y → new DUP nodes (lazy DUP chains)
-      Term dup1 = makeLazyDup(dupLab, x);
-      Term dup2 = makeLazyDup(dupLab, y);
+      if (xVar && termLoc(x) == portLoc(1, dup)) {
+	freeLoc(portLoc(1, dup));
+	move(portLoc(2, dup), y);
+      } else if (xVar && termLoc(x) == portLoc(2, dup)) {
+	freeLoc(portLoc(2, dup));
+	move(portLoc(1, dup), y);
+      } else if (yVar && termLoc(y) == portLoc(1, dup)) {
+	freeLoc(portLoc(1, dup));
+	move(portLoc(2, dup), x);
+      } else if (yVar && termLoc(y) == portLoc(2, dup)) {
+	freeLoc(portLoc(2, dup));
+	move(portLoc(1, dup), x);
+      } else {
+	// x,y → new DUP nodes (lazy DUP chains)
+	Term dup1 = makeLazyDup(dupLab, x);
+	Term dup2 = makeLazyDup(dupLab, y);
 
-      // Two new SUP nodes: each connects to both DUP chains
-      Term sup1 = makePair(SUP, supLab,
-			   newTerm(VAR, 0, portLoc(1, dup1)),
-			   newTerm(VAR, 0, portLoc(1, dup2)));
-      Term sup2 = makePair(SUP, supLab,
-			   newTerm(VAR, 0, portLoc(2, dup1)),
-			   newTerm(VAR, 0, portLoc(2, dup2)));
+	// Two new SUP nodes: each connects to both DUP chains
+	Term sup1 = makePair(SUP, supLab,
+			     newTerm(VAR, 0, portLoc(1, dup1)),
+			     newTerm(VAR, 0, portLoc(1, dup2)));
+	Term sup2 = makePair(SUP, supLab,
+			     newTerm(VAR, 0, portLoc(2, dup1)),
+			     newTerm(VAR, 0, portLoc(2, dup2)));
 
-      // Wire DUP aux ports to new SUPs
-      move(portLoc(1, dup), sup1);
-      move(portLoc(2, dup), sup2);
+	// Wire DUP aux ports to new SUPs
+	move(portLoc(1, dup), sup1);
+	move(portLoc(2, dup), sup2);
+      }
     }
   }
   return;
@@ -1238,11 +1254,14 @@ void interact(Term neg, Term pos) {
   if (1) {
     if (termTag(neg) != ERA && termTag(pos) != NUL) {
       if (1) {
-	// fprintf(stderr, "%ld: ", graphCount);
-	// printRawTerm(neg);
-	// fprintf(stderr, " - ");
-	// printRawTerm(pos);
-	// fprintf(stderr, "\n");
+	if (0) {
+	  fprintf(stderr, "%ld: ", graphCount);
+	  printRawTerm(neg);
+	  fprintf(stderr, " - ");
+	  printRawTerm(pos);
+	  fprintf(stderr, "\n");
+	  pb();
+	}
 
 	FILE *currDOT = dotFile;
 	unsigned currSubG = subGraphs;
@@ -1590,12 +1609,12 @@ void checkBuff() {
       leaks++;
     }
   }
-  //graphDown("leaked", get(0xaf), 0, subGraphs++);
+  subGraph("leaked", get(0x8c), 0);
   if (leaks) {
     fprintf(stderr, "\nLeaked pairs!! %u\n", leaks);
-    // printTerm("leaked", get(0x9c));
-    // pb();
-    // pr();
+    printTerm("leaked", get(0x8c));
+    pb();
+    pr();
     // BOOM("Leak pairs");
   }
 }
