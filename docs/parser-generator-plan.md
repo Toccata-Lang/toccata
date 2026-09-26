@@ -1143,7 +1143,33 @@ generated code)**
   the `(yn (= 1 1))` control (all three must print `yes` — the
   control guards against the new `=`/`cond` drift); (3) the fold
   health probe; (4) if both healthy, the 4-node probe (recipe
-  above); then check the box.
+  above); then check the box. UPDATE 7 (2026-09-26, seventh run):
+  the run-start gate PASSED clean (single run — exit 0, all 13
+  diffs byte-identical, malloc diff 0, remaining nodes 0; no
+  transient segfault this time). The `get` sanity probe FAILED:
+  printed `nonoyes` deterministic 3/3 (exit 0, diff 0, remaining 0
+  — the probe itself runs clean; the VALUES are wrong): check 1
+  `(yn (= (get [1 2] 0) 1))` → `no` (int get broken — it printed
+  `yes` in UPDATE 6), check 2 `(yn (str= (get ["x" "y"] 0) "x"))`
+  → `no` (string get broken, as in UPDATE 4/5/6), and the CONTROL
+  `(yn (= 1 1))` → `yes` (healthy — it printed `no` in UPDATE 6).
+  The drift pattern shifted again (int get regressed, the
+  `=`/`cond` control recovered) but the window is degraded either
+  way: `get` over vectors is broken in both int and string form. The
+  fold health probe FAILED again: `(pr* (str-vect "hello"))` +
+  `(pr* (str-vect (map ["a" "b"] identity)))` silent-aborts exit
+  134 with NO output 3/3 (`str-vect` / `map` dead, as in UPDATE
+  2/3/5). The 4-node classification probe was NOT run (it needs
+  both `get` over the IR's `data`/`pred` vectors and the
+  fold/`map` path — both dead; it would abort by construction). Per
+  the degraded-window protocol: NO source edited (the two-pass
+  source is correct and gate-verified). Box stays UNCHECKED. Window
+  state: `new-toc` 2026-09-09 19:10 binary (unchanged); memory
+  healthy (41GB available). NEXT RUN: same protocol as UPDATE 6 —
+  (1) the gate; (2) the `get` sanity probe INCLUDING the `(yn (= 1
+  1))` control (all three must print `yes`); (3) the fold health
+  probe; (4) if both healthy, the 4-node probe (recipe above);
+  then check the box.
 
 - Rewrite decision (2026-09-26): the owner judged the v1 emitter
   horrible — its explicit-recursion / `-acc` threading shape exists
