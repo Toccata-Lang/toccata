@@ -134,6 +134,12 @@ builds the code.
   (get v i))` (same contract as `first`). Comparing the raw result to a
   bare value (`(= (get [1 2] 0) 1)`) is silently false, not an error.
 
+* `extract` aborts the program on `None` (`*** The 'nothing' value can not
+  be passed to 'extract'.`) — it is the unwrap idiom, not a safe accessor.
+  Use `(extract (get v i))` / `(extract (first v))` only where the index
+  is in range by construction (static arity, checked loop bound). Handling
+  a possible miss requires branching on the Maybe (until `match` lands).
+
 * `reduce` is a left fold: `(reduce coll init f)` applies `(f acc elem)` per
   element and returns `init` for an empty collection. `reverse`, `last`, and
   `butlast` are implemented for Vector; `last` returns `Some element` like
