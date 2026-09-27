@@ -143,7 +143,9 @@ builds the code.
   inverse.
 
 * Do not call `str*` directly on a vector — it is for `str` to use under the
-  covers. To create a string from a vector of values, use `to-str`.
+  covers. To create a string from a number of values, use 'str'. The compiler
+  will desugar that to a call to 'str*' for you. 'str' may take any number of
+  arguments.
 
 * Do not use `escape-chars`.
 
