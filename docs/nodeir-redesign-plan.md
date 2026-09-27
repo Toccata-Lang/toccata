@@ -335,3 +335,45 @@ is not toc_edit-reachable — the known limitation). Verified: `check`
 exit 0; library loads clean (`*** Loaded
 interpreter/intrp-emit.toc`, exit 134, captured stderr 21 lines,
 non-empty). No deviation from the plan.
+
+### Task 4a (leaf builders migrated) — 2026-09-27
+
+Rewrote the 6 leaf builders in `interpreter/intrp-emit.toc` to
+construct `(NodeIR2 (<IRNode ctor> ...) <cl?>)`: `ir-char-range` →
+`(NodeIR2 (CharRange (.lower v) (.upper v)) (Some None))`;
+`ir-not-char` → `(NodeIR2 (NotChar (.char v)) (Some None))`;
+`ir-string` → `(NodeIR2 (Str v) (Some None))` for the 1-char case,
+`(NodeIR2 (Str v) None)` otherwise; `ir-ref` → `(NodeIR2 (Ref
+(.name v)) None)`; `ir-always-succeed` → `(NodeIR2 (AlwaysSucceed
+(.value v)) None)`; `ir-error` → `(NodeIR2 (Error (.msg v)) None)`.
+The `char-level` helper now reads `(.cl? ir)` (its header comment
+updated to say so). `all-ir-char-level?` unchanged (it calls
+`char-level`). All 7 node edits (6 defns + the comment) via
+`toc_edit replace`, each new-toc-validated (exit 0, first attempt).
+
+Expected mid-migration state (per the plan, confirmed): the composite
+builders still construct the old `NodeIR` (their data vectors now
+hold `NodeIR2` children), and the render path (still `.kind` /
+`.data`) is runtime-broken until tasks 4b/5b — the library still
+loads clean, and no committed consumer calls the render path.
+
+Verified: `check` exit 0; library loads clean (`*** Loaded
+interpreter/intrp-emit.toc`, exit 134, captured stderr 21 lines,
+non-empty). Temp probe `interpreter/ir4a-probe.toc` (deleted after):
+`add-ns`ed `emit` + `grammar`, ran `emit/analyze` over the 6 leaf
+shapes (CharRange "a" "z", NotChar "x", String "a" and "abc", Ref
+"foo", AlwaysSucceed "abc" and `(vector)`, Error "expected a
+token"), printing per shape the node type-name, each named field via
+its getter, and the `cl?` type-name. Probe build/run recipe
+(reusable for 4b/5a/5b): `./new-toc <probe> > tmp` emits the C to
+stdout (exit 0) and does NOT run it — then the Makefile's awk `#line`
+step, then `clang -g -march=native -I. -DCHECK_MEM_LEAK=1 -DSAFETY=1
+-DSTATS=1 -lm -lpthread -latomic probe.c new.c runtime3.c graph.c`
+(from the repo root), then run the binary. The probe ran clean:
+exit 0, malloc diff 0, remaining nodes 0. All 8 printed lines
+hand-verified (output in reverse creation order, read content-wise):
+correct `IRNode` ctor per shape, named fields correct (lo=a hi=z;
+ch=x; lit=a / lit=abc; ref-name=foo; as-value String "abc" /
+Vector []; error-msg="expected a token"), `cl?` `Some` exactly for
+CharRange / NotChar / the 1-char Str and `None` for the rest.
+No deviation from the plan.
