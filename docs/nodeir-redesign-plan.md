@@ -315,3 +315,23 @@ whitespace sv)))` ctor call with the auto-loc — matching the 4b.1 /
 diffing against the saved baselines is byte-identical (`cmp` clean
 both), so the Task 5b byte-compare target is stable. No deviation
 from the plan.
+
+### Task 3 (new types added, unused) — 2026-09-27
+
+Inserted after the old `NodeIR` deftype in `interpreter/intrp-emit.toc`
+(29 added lines, nothing else touched — `git diff --stat` confirms): the
+`IRNode` multi-ctor deftype (13 ctors, primary names per the Task 1
+note, the 16 settled field names, no `!` annotations) and the `NodeIR2
+[node cl?]` single-ctor wrapper, each with a header comment noting the
+transition names and why. The old `NodeIR` stays; nothing references
+the new types yet.
+
+Method: `toc_edit insert` on the `NodeIR` deftype node (path 3,
+`--after`) — accepted on the first attempt (exit 0, new-toc validated
+the candidate); the splice left one blank-line gap off (no blank after
+the old deftype, double blank after the new one), fixed with a
+byte-exact Python whitespace-only edit (unowned inter-node whitespace
+is not toc_edit-reachable — the known limitation). Verified: `check`
+exit 0; library loads clean (`*** Loaded
+interpreter/intrp-emit.toc`, exit 134, captured stderr 21 lines,
+non-empty). No deviation from the plan.
