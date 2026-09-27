@@ -4,7 +4,7 @@ Status: clean slate (2026-09-26). Supersedes
 `docs/parser-generator-plan-bad.md` in its entirety — the v1 and v2
 emitters are garbage (owner ruling); their source lives in git
 history. Carried forward from the old plan: the `emit-want` byte-
-exact test targets (re-blessed once, see item 5) and the
+exact test targets (re-blessed once, see items 5a/5b) and the
 `parse-then` / `parse-or` result-discrimination kit (settled,
 unchanged). The old plan file stays in the tree as-is for now; it is
 deleted later.
@@ -28,7 +28,7 @@ vector) plus a thin CLI `main`.
 16 extend-type / 5 deftype / 5 def / 2 inline) and
 `regression-tests/test11.toc` (7 forms: 2 def / 4 defn / 1 main) with
 zero parse errors, verified by **structural assertions on file facts**
-in an acceptance driver (item 7) — not want-files (want-files test the
+in an acceptance driver (item 7a) — not want-files (want-files test the
 generator's output, not the generated reader), and no differential
 against the hand-written reader (disowned: never finished or
 verified).
@@ -61,9 +61,9 @@ TBD).
   generator, rewritten for the v3 contract (same synthetic-grammar
   families; the `rc` grammar rewritten `Recur` → `Ref`; a new
   `Node`-exercising grammar added).
-- `interpreter/emit-want/*` — the expected files (14 after item 5
-  adds the `nd` grammar), RE-BLESSED once from the v3 emitter (item
-  5, owner review); byte-exact net thereafter.
+- `interpreter/emit-want/*` — the expected files (14 after item 5a
+  adds the `nd` grammar), RE-BLESSED once from the v3 emitter
+  (regenerated in 5a, blessed in 5b); byte-exact net thereafter.
 - `interpreter/gen-rdr.toc` — the generated reader module. Written by
   the driver, built by a Makefile target, a build artifact — NOT
   committed.
@@ -361,10 +361,11 @@ remains helper-layer, never grammar.
 ### Test strategy
 
 - **Generator output (want files):** the `emit-want` files (14 after
-  item 5) are regenerated from the v3 emitter over the same
+  item 5a) are regenerated from the v3 emitter over the same
   synthetic grammars (the `rc` grammar rewritten to `Ref`; a new `nd`
   grammar exercising `Node` + auto-loc + a mutual-Ref cycle added
-  to the driver) and re-blessed ONCE after owner review (item 5). The
+  to the driver) and re-blessed ONCE after owner review (items
+  5a/5b). The
   six predicate files are expected to survive byte-identical; the
   module files change (skip-at-entry, crutch policy, defn order,
   multi-char literals, the redefined `Ignore`). The `ig` grammar now
@@ -513,12 +514,21 @@ item: this file + AGENTS.md. Generated code follows
     level `Many`, and the emitted source is hand-verified (the
     fast/slow split, the read-run wrapper, the acc loop).
 
-- [ ] **4b.6. Emitter v3: render — rule entry + context plumbing**
+- [ ] **4b.6. Emitter v3: render — context plumbing**
+  Thread the context (enclosing rule name + helper-name prefix)
+  through all the render functions written so far (4b.1-4b.5); audit
+  skip-at-entry in every parser entry (rule defns, lifted helpers,
+  inlined literal / one-char bodies, fast-path run wrappers). A pure
+  refactor of the existing renders — no new ctors.
+  - Done when: the library loads clean; a temporary probe (deleted
+    before the commit) re-renders the 4b.1-4b.5 shapes with the
+    context threaded and each emitted source is hand-verified
+    (output unchanged except lifted-helper names carrying the
+    prefix; skip-at-entry present at every entry).
+
+- [ ] **4b.7. Emitter v3: render — rule entry + integration probe**
   `Rule` → module-level `(defn <name> [state] ...)` source lines;
-  thread the context (enclosing rule name + helper-name prefix)
-  through all the render functions; skip-at-entry in every parser
-  entry (rule defns, lifted helpers, inlined literal / one-char
-  bodies, fast-path run wrappers). No module assembly yet — the
+  `Ref` as a named call into it. No module assembly yet — the
   render functions return source lines for their node.
   - Done when: the library loads clean; a temporary probe (deleted
     before the commit) renders a hand-written 3-rule grammar (one
@@ -528,36 +538,52 @@ item: this file + AGENTS.md. Generated code follows
     grouped-literal Any, the fast/slow Many split, `Ref` as a named
     call).
 
-- [ ] **4c. Emitter v3: module assembly + driver API**
-  Extend `interpreter/intrp-emit.toc` with module assembly and the
-  driver-facing API: the module header (add-ns state + raw; the
-  `parse-then` / `parse-or` kit; the parse-error kit); `(def
-  <rule>)` crutches — only for rules in a cycle (computed over the
-  `Ref` name graph); rule defns in topological order (dependencies
-  first); lifted helpers; `parse-program` + thin `main` per the
-  template; and the `emit-pred` / `emit-module` API per the Settled
-  section.
+- [ ] **4c.1. Emitter v3: name graph (cycles + topological order)**
+  Pure functions over the rule set (rule names + `Ref` edges read
+  from the IR): which rules are in a cycle (self-`Ref` or mutual —
+  the crutch set) and a dependency-first topological order (so
+  every non-recursive reference is a backward one and needs no
+  crutch).
+  - Done when: the library loads clean; a temporary probe (deleted
+    before the commit) runs both over a hand-built rule set with a
+    self-`Ref`, a mutual-`Ref` pair, and an acyclic chain, and the
+    cycle set and the order are hand-verified.
+
+- [ ] **4c.2. Emitter v3: module assembly + driver API**
+  Module assembly per the Settled section: the module header
+  (add-ns state + raw; the `parse-then` / `parse-or` kit; the
+  parse-error kit); `(def <rule>)` crutches exactly on the 4c.1
+  cycle rules; rule defns in the 4c.1 topological order; lifted
+  helpers; `parse-program` + thin `main` per the template; and the
+  `emit-pred` / `emit-module` API per the Settled section.
   - Done when: the library loads clean; a temporary probe (deleted
     before the commit) runs `emit-module` over the same 3-rule
-    grammar and the emitted module builds clean under `new-toc`
-    (loads with no error lines), with crutches exactly on the cycle
-    rules, topological defn order, skip-at-entry, and the auto-loc
-    field present.
+    grammar as 4b.7 and the emitted module builds clean under
+    `new-toc` (loads with no error lines), with crutches exactly on
+    the cycle rules, topological defn order, skip-at-entry, and the
+    auto-loc field present.
 
-- [ ] **5. Driver rewrite + want-file re-blessing**
+- [ ] **5a. Driver rewrite + want-file regeneration**
   Rewrite `interpreter/emit-pred.toc` for the v3 contract: the
   same synthetic-grammar families (`ig` / `an` / `mn` / `fn` — `ig`
   now exercising the discard-and-continue `Ignore`), the `rc`
   grammar rewritten `Recur` → `Ref`, plus a new `nd` grammar
   exercising `Node` + auto-loc + `Concat` + a mutual-Ref cycle;
-  regenerate all `emit-want` files from the v3 emitter; **owner
-  reviews and blesses the new expected files** (the one-time re-
-  blessing — record the review in the as-built note).
+  regenerate all `emit-want` files from the v3 emitter and commit
+  the regenerated module files as candidates (unblessed).
+  - Done when: the driver loads clean and runs over all grammars;
+    the six predicate outputs are byte-identical to the old blessed
+    files; the regenerated module want files are committed as
+    candidates; the generated `rc` module builds and its
+    success/failure sample paths print the expected lines with the
+    expected exits; zero leaks, 0 remaining nodes.
+
+- [ ] **5b. Want-file blessing (one-time)**
+  **Owner reviews and blesses the candidate `emit-want` files**
+  (item 5a) against the old blessed ones — the one-time re-blessing;
+  record the review in the as-built note.
   - Done when: `make emit-pred` passes every diff byte-identical
-    against the blessed files (the six predicate diffs expected
-    unchanged from the old files); the generated `rc` module builds
-    and its success/failure sample paths print the expected lines
-    with the expected exits; zero leaks, 0 remaining nodes.
+    against the blessed files.
 
 - [ ] **6a. Grow the grammar to scope (a) — expression level**
   Add to `interpreter/intrp-grammar.toc` per the Rule inventory, the
@@ -570,9 +596,16 @@ item: this file + AGENTS.md. Generated code follows
   vector matching its ctor's field list per the Value-shape
   discipline. The driver's real-grammar emission keeps `expression`
   as its entry.
-  - Done when: the grammar library loads clean; `make emit-pred`
-    passes (all diffs byte-identical, `module-real` against a file
-    re-blessed by the owner to reflect the new expression rules).
+  - Done when: the grammar library loads clean; the driver's
+    real-grammar emission runs and the regenerated `module-real`
+    is committed as a candidate (unblessed); all other `emit-pred`
+    diffs byte-identical against the blessed files.
+
+- [ ] **6a.2. `module-real` blessing (expression rules)**
+  Owner reviews the candidate `module-real` (item 6a) and blesses
+  it to reflect the new expression rules.
+  - Done when: `make emit-pred` passes every diff byte-identical
+    against the blessed files.
 
 - [ ] **6b. Grow the grammar to scope (a) — top-level forms**
   Add to `interpreter/intrp-grammar.toc` per the Rule inventory, the
@@ -583,27 +616,36 @@ item: this file + AGENTS.md. Generated code follows
   ctor name, every `Node` value vector matching its ctor's field
   list per the Value-shape discipline. Update the driver's
   real-grammar emission to the full rule set with `top-level-form`
-  as the entry; regenerate `module-real` (blessed by the owner as
-  part of this item's diff review).
-  - Done when: the grammar library loads clean; `make emit-pred`
-    passes (all diffs byte-identical, `module-real` against the
-    re-blessed file); `make gen-rdr` builds the generated full-
-    grammar reader module.
+  as the entry; regenerate `module-real` as a candidate (unblessed).
+  - Done when: the grammar library loads clean; the regenerated
+    `module-real` is committed as a candidate; all other `emit-pred`
+    diffs byte-identical against the blessed files; `make gen-rdr`
+    builds the generated full-grammar reader module.
 
-- [ ] **7. Acceptance: `rdr-accept.toc` + `gen-accept` + error corpus**
+- [ ] **6b.2. `module-real` blessing (full rule set)**
+  Owner reviews the candidate `module-real` (item 6b) and blesses
+  it (this item's diff review).
+  - Done when: `make emit-pred` passes every diff byte-identical
+    against the blessed files.
+
+- [ ] **7a. Acceptance: `rdr-accept.toc` + `gen-accept` (success path)**
   Write `interpreter/rdr-accept.toc` (add-ns the generated module;
   the file-fact assertions per the Test strategy — counts,
   per-form tallies, spot-checks; parse-error branch and success
-  path as separate defns, lets out of non-else cond clauses);
-  write the `gen-bad*.toc` corpus + expected outputs; add the
-  `gen-accept` Makefile target (build the generated module, run
-  the acceptance driver, run the corpus with expected non-zero
-  exits); delete the retired `gen-corpus*.toc` / `-want` files and
+  path as separate defns, lets out of non-else cond clauses); add
+  the `gen-accept` Makefile target (build the generated module, run
+  the acceptance driver).
+  - Done when: `make gen-accept` passes — both acceptance files read
+    with zero parse errors and every assertion OK, zero leaks / 0
+    remaining nodes on the success path.
+
+- [ ] **7b. Error corpus + retire the old**
+  Write the `gen-bad*.toc` corpus + expected outputs and wire it
+  into `gen-accept` (each case: expected `file:line: msg` + non-zero
+  exit); delete the retired `gen-corpus*.toc` / `-want` files and
   the `gen-corpus` target.
-  - Done when: `make gen-accept` passes end to end — both
-    acceptance files read with zero parse errors and every
-    assertion OK, every corpus case matches its expected output +
-    exit, zero leaks / 0 remaining nodes on the success path.
+  - Done when: `make gen-accept` passes end to end — every corpus
+    case matches its expected output + exit.
 
 - [ ] **8. Final task: write the plan for the remaining forms**
   A new plan document covering: scope (b) grammar growth —
@@ -645,7 +687,7 @@ deviation from the plan's prediction (expected none), and how it was
 verified. Also the place to record a toolchain-window observation
 (see Toolchain policy) when a 5/5 silent abort with balanced parens
 and a healthy control is evidence about `new-toc`. Append-only, newest
-last, so the final acceptance (item 7) and the owner have the record
+last, so the final acceptance (item 7a) and the owner have the record
 to check against.
 
 - (2026-09-26, item 1) Created `interpreter/intrp-state.toc`: the ten kit pieces extracted byte-verbatim from `interpreter/intrp-rdr.toc` (verified by substring check of each original block against the new file), header comment rewritten for the library/namespaced-by-importer role. One self-inflicted transcription slip (a dropped `)` in `skip-comment`) was caught by a stack-based nesting check before the first successful load and fixed. Verified: `./new-toc interpreter/intrp-state.toc > /dev/null 2>err` prints `*** Loaded interpreter/intrp-state.toc` with no other error lines (trailing missing-main/Agent lines confirmed standard via the `intrp-ast.toc` control); `interpreter/intrp-rdr.toc` unmodified.
