@@ -31,31 +31,12 @@
 
 (add-ns grammar (module "intrp-grammar.toc"))
 
-;; NodeIR: the analyzed node. No ! annotations (new-toc hazard on
-;; multi-field ctors).
-;;   kind        - the bare ctor name ("CharRange", "NotChar", "All",
-;;                 "Any", "Many", "Rule", "Ref", "Node", "Concat",
-;;                 "Ignore", "AlwaysSucceed", "Error"), or "String"
-;;                 for a bare string literal
-;;   char-level? - Some None iff this node classifies a single char:
-;;                 CharRange / NotChar / one-char String; Any iff ALL
-;;                 alts are char-level; Rule / Many iff the child is;
-;;                 Ref / Node / Concat / All / Ignore never (Ref is a
-;;                 leaf - no force-time global resolution)
-;;   data        - ctor-specific raw fields or child IRs:
-;;                 CharRange [lo hi]; NotChar [ch]; String [lit];
-;;                 Error [msg]; AlwaysSucceed [v]; Ref [name];
-;;                 All / Any / Concat [NodeIR ...];
-;;                 Many / Ignore [NodeIR];
-;;                 Rule [name NodeIR]; Node [name NodeIR]
-(deftype NodeIR [kind char-level? data])
-
-;; IRNode: the shape of an analyzed node (NodeIR redesign task 3; the
-;; multi-ctor replacement for NodeIR's positional data vector).
-;; Unused until the builders migrate (tasks 4a/4b). No ! annotations
-;; (new-toc hazard on multi-field ctors). The field names are unique
-;; across every type in the build (grammar and state included), so
-;; the render phase can use direct .field getters.
+;; IRNode: the shape of an analyzed node (NodeIR redesign; the
+;; multi-ctor replacement for the old NodeIR's positional data
+;; vector). No ! annotations (new-toc hazard on multi-field ctors).
+;; The field names are unique across every type in the build (grammar
+;; and state included), so the render phase can use direct .field
+;; getters.
 (deftype IRNode
   (CharRange [lo hi])
   (NotChar [ch])
@@ -71,13 +52,15 @@
   (AlwaysSucceed [as-value])
   (Error [error-msg]))
 
-;; NodeIR2: the wrapper (transition name - the old NodeIR stays until
-;; task 6 deletes it and renames this one back to NodeIR).
-;;   node - the IRNode (the shape)
-;;   cl?  - the char-level classification (transition name for
-;;          char-level? while the old NodeIR's same-named field
-;;          would make the getter's name lookup ambiguous)
-(deftype NodeIR2 [node cl?])
+;; NodeIR: the wrapper - the analyzed node. No ! annotations (new-toc
+;; hazard on multi-field ctors).
+;;   node        - the IRNode (the shape)
+;;   char-level? - Some None iff this node classifies a single char:
+;;                 CharRange / NotChar / one-char Str; Any iff ALL
+;;                 alts are char-level; Rule / Many iff the child is;
+;;                 Ref / Node / Concat / All / Ignore never (Ref is a
+;;                 leaf - no force-time global resolution)
+(deftype NodeIR [node char-level?])
 
 ;; all-ir-char-level? [irs]: Some None iff every IR in irs is
 ;; char-level (a reduce over the flags - the v1 pre-pass, bottom-up
@@ -85,86 +68,100 @@
 (defn all-ir-char-level? [irs]
   (reduce irs (Some None)
           (fn [acc ir]
-            (and acc (.cl? ir)))))
+            (and acc (.char-level? ir)))))
+
 
 ;; ir-char-range / ir-not-char: the leaf ctors - recurse leaves them
 ;; raw, so the fields are the grammar's raw values.
 (defn ir-char-range [v]
-  (NodeIR2 (CharRange (.lower v) (.upper v))
-           (Some None)))
+  (NodeIR (CharRange (.lower v) (.upper v))
+          (Some None)))
+
 
 (defn ir-not-char [v]
-  (NodeIR2 (NotChar (.char v))
-           (Some None)))
+  (NodeIR (NotChar (.char v))
+          (Some None)))
+
 
 ;; One-char String: char-level (the Ctor table's bare-String pred);
 ;; a longer literal is not char-level (no grammar node is one).
 (defn ir-string [v]
   (cond (= (count v) 1)
-    (NodeIR2 (Str v)
-             (Some None))
+    (NodeIR (Str v)
+            (Some None))
 
-    (NodeIR2 (Str v)
-             None)))
+    (NodeIR (Str v)
+            None)))
+
 
 ;; ir-any-dispatch / ir-any: the parameter split (per the plan's
 ;; Settled design) - the alts vector is computed once and passed as
 ;; a parameter, so the dispatch cond is flat over a named value.
 (defn ir-any-dispatch [cs]
   (cond (all-ir-char-level? cs)
-    (NodeIR2 (Any cs)
-             (Some None))
+    (NodeIR (Any cs)
+            (Some None))
 
-    (NodeIR2 (Any cs)
-             None)))
+    (NodeIR (Any cs)
+            None)))
+
 
 (defn ir-any [v]
   (ir-any-dispatch (.parsers v)))
 
 ;; The container ctors - recurse reassembled them, so the fields
-;; hold the children's NodeIR2s (the impl knows its ctor). Rule /
+;; hold the children's NodeIRs (the impl knows its ctor). Rule /
 ;; Many delegate the flag to their child (ctor table); All / Ignore /
 ;; Node / Concat are never char-level.
 (defn ir-all [v]
-  (NodeIR2 (All (.parsers v))
-           None))
+  (NodeIR (All (.parsers v))
+          None))
+
 
 (defn ir-many [v]
   (let [c (.parser v)]
-    (NodeIR2 (Many c)
-             (.cl? c))))
+    (NodeIR (Many c)
+            (.char-level? c))))
+
 
 (defn ir-rule [v]
   (let [c (.parser v)]
-    (NodeIR2 (Rule (.name v) c)
-             (.cl? c))))
+    (NodeIR (Rule (.name v) c)
+            (.char-level? c))))
+
 
 ;; Ref: a leaf (the fold stops here - the named rule's IR is the
 ;; driver's to supply at render time; no force-time global
 ;; resolution). Never char-level for the same reason.
 (defn ir-ref [v]
-  (NodeIR2 (Ref (.name v))
-           None))
+  (NodeIR (Ref (.name v))
+          None))
+
 
 (defn ir-node [v]
-  (NodeIR2 (Node (.name v) (.parser v))
-           None))
+  (NodeIR (Node (.name v) (.parser v))
+          None))
+
 
 (defn ir-concat [v]
-  (NodeIR2 (Concat (.parsers v))
-           None))
+  (NodeIR (Concat (.parsers v))
+          None))
+
 
 (defn ir-ignore [v]
-  (NodeIR2 (Ignore (.parser v))
-           None))
+  (NodeIR (Ignore (.parser v))
+          None))
+
 
 (defn ir-always-succeed [v]
-  (NodeIR2 (AlwaysSucceed (.value v))
-           None))
+  (NodeIR (AlwaysSucceed (.value v))
+          None))
+
 
 (defn ir-error [v]
-  (NodeIR2 (Error (.msg v))
-           None))
+  (NodeIR (Error (.msg v))
+          None))
+
 
 ;; analyze-node: the fold's handler as a PROTOCOL (one extend-type
 ;; impl per ctor type - the v1 EBNF pattern). NOT a defn dispatching
@@ -175,8 +172,9 @@
 ;; shape that runs clean (verified 2026-09-27, item 4a).
 (defp analyze-node [v]
   ! v grammar/ParserCombinator
-  ! -> NodeIR2
+  ! -> NodeIR
 )
+
 
 (extend-type grammar/CharRange
   (analyze-node [v]
@@ -411,9 +409,10 @@
 ;; --- value-shape helpers (for Concat's join and Node's spread) -------
 
 ;; char-level [ir]: true iff the IR node classifies a single char
-;; (the NodeIR2 wrapper's cl? is Some).
+;; (the NodeIR wrapper's char-level? is Some).
 (defn char-level [ir]
-  (str= (type-name (.cl? ir)) "Some"))
+  (str= (type-name (.char-level? ir)) "Some"))
+
 
 ;; ir-value-shape [ir]: "string" iff the position's value is a single
 ;; String; "vector" iff it is a Vector of strings. Structural (the IR),

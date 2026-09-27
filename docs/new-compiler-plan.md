@@ -1193,6 +1193,17 @@ rules; each form's rule arrives with its phase.
   For byte-compare probes, build the whole expected output as ONE
   string and `pr*` it as a single unit — a single unit prints
   atomically and in order.
+- **Renaming a deftype is not one validated edit (2026-09-27, nodeir
+  task 6)**: new-toc resolves the top-level symbols (type/ctor names)
+  used in defn bodies single-pass at load, so renaming
+  `(deftype Foo2 ...)` to `(deftype Foo ...)` while sibling defns
+  still reference `Foo2` fails validation with `*** Undefined symbol:
+  'Foo2' at <file>: <line>` — and updating the references to the new
+  name BEFORE the deftype exists fails identically. A whole-file
+  rename cannot be split into two validated edits. Do it in three:
+  (1) `insert` the new deftype (both coexist — an unused deftype
+  loads clean), (2) update the references node by node, (3) `delete`
+  the old deftype. Every step validates.
 
 ## Settled (continued)
 

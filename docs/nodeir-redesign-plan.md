@@ -550,3 +550,49 @@ facts):
   separated) and the noise lines themselves are duplicated/dropped.
   Byte-compare probes must `pr*` the whole expected output as a
   single unit (a single unit prints atomically and in order).
+
+### Task 6 (old NodeIR deleted, final names applied) — 2026-09-27
+
+Deleted `(deftype NodeIR [kind char-level? data])` and its header
+comment; renamed the wrapper `NodeIR2 [node cl?]` → `NodeIR [node
+char-level?]` (its comment updated to the final form, reusing the old
+NodeIR comment's classification description); updated every reference
+— `all-ir-char-level?` (`.cl?` → `.char-level?`), the 13 `ir-*`
+builders (`NodeIR2` → `NodeIR`; `ir-many` / `ir-rule` also `.cl? c` →
+`.char-level? c`), the `analyze-node` defp annotation (`! -> NodeIR`),
+the `char-level` helper + comment (`.cl?` → `.char-level?`), and the
+stale comments (the IRNode comment's "Unused until the builders
+migrate (tasks 4a/4b)" line dropped; the container-ctors comment's
+"NodeIR2s" → "NodeIRs").
+
+DEVIATION from the plan's implied order (forced by new-toc's
+single-pass symbol resolution): the rename cannot be "delete the old
+dtype, rename the wrapper" — the direct rename edit was REJECTED
+(`*** Undefined symbol: 'NodeIR2' at <file>: 76`): the builders still
+reference `NodeIR2`, and updating the references before the deftype
+exists fails identically. What was done instead: (1) delete the old
+`NodeIR` + its comment (nothing references it — no `.kind` / `.data`
+/ `.char-level?` uses remained after 5b), (2) `insert` the new
+`(deftype NodeIR [node char-level?])` before the `NodeIR2` deftype
+(both coexist, loads clean), (3) replace all 16 reference nodes, (4)
+`delete` the `NodeIR2` deftype. All 21 node edits via toc_edit
+(insert / replace / delete), each new-toc-validated; the insert splice
+left the two deftypes on one line and the deletes left double blank
+lines — both fixed with byte-exact whitespace-only edits (unowned
+inter-node whitespace, the known limitation).
+
+Verified: `check` exit 0; library loads clean (`*** Loaded
+interpreter/intrp-emit.toc`, exit 134, captured stderr 21 lines,
+non-empty); grep confirms no `.kind`, `.data`, `cl?`, or `NodeIR2`
+reference remains in the file. Temp probe `interpreter/ir6-probe.toc`
+(deleted after): `add-ns`ed `emit` + `grammar`, ran `emit/analyze`
+over `grammar/CharRange "a" "z"` and `grammar/Rule "r" (grammar/Many
+(grammar/CharRange "0" "9"))`, printed the `IRNode` ctor + the
+`char-level?` type-name per shape, and rendered the CharRange via
+`emit/render-child`. Ran clean: exit 0, malloc diff 0, remaining
+nodes 0. Output hand-verified: s1 ctor=CharRange cl=Some; s2
+ctor=Rule cl=Some (delegation through Many-over-CharRange); the
+rendered line matches the 4b.1 CharRange baseline shape (skip-at-
+entry, one-char test, range pred, take-char, the error message).
+New durable fact (mirrored to new-compiler-plan.md Verified facts):
+the deftype-rename hazard above. No other deviation from the plan.
