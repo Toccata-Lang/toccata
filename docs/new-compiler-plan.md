@@ -1174,6 +1174,11 @@ rules; each form's rule arrives with its phase.
   3/3, no message; minimal repro `(main [argv] (pr* (str= "a" "a")))`.
   The same value is fine in a boolean context or via `to-str` /
   `type-name`. Never `pr*` a raw comparison result.
+- **`pr*` output is REVERSED relative to creation order (2026-09-27,
+  parser-gen item 4b.1)**: `(main [argv] (pr* "a") (pr* "b") (pr* "c"))`
+  prints `bac` (minimal control, clean build, malloc diff 0). Probe
+  output lines appear in the opposite order to the calls — read probe
+  output content-wise, never positionally.
 
 ## Settled (continued)
 
