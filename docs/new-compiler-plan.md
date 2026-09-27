@@ -1160,6 +1160,20 @@ rules; each form's rule arrives with its phase.
   in such a vector printing `(Ref  name )` (an extra space appears).
   Do not byte-compare `str-vect`-style debug output against
   hand-written expectations.
+- **`fold` with a DEFN handler miscompiles when the fold reaches a
+  ctor whose `recurse` impl maps over a vector (2026-09-27,
+  parser-gen item 4a)**: the generated program aborts with `***
+  Compiler screwed up. Incomplete result. at runtime3.c:3396` (the
+  Tag SUB safety check) — 5/5 with the same binary; minimal repro is
+  a fold over `(Any [CharRange NotChar])` with a plain no-cond defn
+  handler. The protocol shape (`defp` + one `extend-type` impl per
+  ctor type) runs the same fold over the same value clean. A defn
+  handler is safe when the fold never reaches a map-recurse ctor.
+- **`pr*` on the result of a String comparison (`str=` / `=` — the
+  inline `Some`) aborts silently (2026-09-27, parser-gen item 4a)**:
+  3/3, no message; minimal repro `(main [argv] (pr* (str= "a" "a")))`.
+  The same value is fine in a boolean context or via `to-str` /
+  `type-name`. Never `pr*` a raw comparison result.
 
 ## Settled (continued)
 
