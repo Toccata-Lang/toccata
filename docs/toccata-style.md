@@ -87,6 +87,9 @@ builds the code.
 
 ## Data
 
+* Never use the literal vector `[ ... ]` or hash-map `{ ... }` notation —
+  use the core calls `(vector ...)` and `(hash-map ...)` respectively.
+
 * A `'symbol` expression — the old Toccata's symbol literal — is just a
   shorthand for a string literal in the new Toccata. There is no separate
   Symbol type: `'foo` is the string `"foo"`.
@@ -119,6 +122,11 @@ builds the code.
 
 * `first` on a Vector returns `Some element`, not the bare element — extract
   with `(extract (first v))`. `rest` returns a Vector.
+
+* `get` on a Vector returns a Maybe — `Some element` on a hit, `None` on a
+  miss — not the bare element. Compare or use the element via `(extract
+  (get v i))` (same contract as `first`). Comparing the raw result to a
+  bare value (`(= (get [1 2] 0) 1)`) is silently false, not an error.
 
 * `reduce` is a left fold: `(reduce coll init f)` applies `(f acc elem)` per
   element and returns `init` for an empty collection. `reverse`, `last`, and
