@@ -1,0 +1,102 @@
+;; intrp-state.toc — helper kit for the generated reader: parser
+;; state, results, and token primitives.
+;;
+;; Extracted verbatim from interpreter/intrp-rdr.toc (the phase-1
+;; reader), which stays untouched. The generated module
+;; (interpreter/gen-rdr.toc) imports this file with
+;; (add-ns state (module "intrp-state.toc")) and prefixes every use
+;; as state/... — the kit is namespaced by the importing module, not
+;; by this file.
+;;
+;; This file is a LIBRARY (no main).
+;;
+;; Model (settled):
+;;   * ParserState [input values] — `input` is the unconsumed suffix of
+;;     the source; `values` is a bookkeeping map {"file" String, "line"
+;;     Integer}. `subs` returns O(1) SubString views.
+;;   * Maximal-run reads scan for a length, then extract with ONE subs.
+;;   * The line counter is bumped by take-char when it consumes "\n".
+;;   * NO local symbol may shadow a symbol from the core namespace.
+
+;; --- ParserState -----------------------------------------------------
+
+(deftype ParserState [input values]
+  ! input String
+  (str-vect [v]
+    (flat-map ["(ParserState " input " " values ")"]
+              str-vect)))
+
+;; --- ParserResults ---------------------------------------------------
+
+(deftype ParserResults
+  (ParserMatch [value state])
+  (ParserIgnore [state])
+  (ParserError [msg state]))
+
+;; --- Grouping types --------------------------------------------------
+;;
+;; Multi-value returns, each with named fields, accessed via getters.
+;; No `!` annotations (new-toc mis-applies them on multi-field ctors).
+
+(deftype Token [text state])
+
+;; --- State helpers ---------------------------------------------------
+
+(defn make-state [input file line]
+  (ParserState input {"file" file, "line" line}))
+
+(defn state-line [state]
+  (extract (get (.values state) "line")))
+
+;; --- Token helpers ---------------------------------------------------
+
+(defn take-char [state]
+  (let [input (.input state)
+        line (state-line state)
+        new-line (cond (str= (subs input 0 1) "\n")
+                       (+ line 1)
+
+                       line)]
+    (ParserState (subs input 1 (count input))
+                 (assoc (.values state) "line" new-line))))
+
+(defn skip-comment [state]
+  (let [input (.input state)]
+    (cond (or (str= input "")
+              (str-prefix? "\n" input))
+          state
+
+          (skip-comment (take-char state)))))
+
+(defn skip-whitespace [state]
+  (let [input (.input state)]
+    (cond (str= input "")
+          state
+
+          (str-prefix? ";" input)
+          (skip-whitespace (skip-comment (take-char state)))
+
+          (or (str-prefix? " " input)
+              (str-prefix? "\t" input)
+              (str-prefix? "\n" input)
+              (str-prefix? "\r" input))
+          (skip-whitespace (take-char state))
+
+          state)))
+
+(defn run-length [s pred]
+  (let [c (subs s 0 1)]
+    (cond (str= c "")
+          0
+
+          (pred c)
+          (+ 1 (run-length (subs s 1 (count s)) pred))
+
+          0)))
+
+(defn read-run [state pred]
+  (let [input (.input state)
+        len (run-length input pred)]
+    (Token (subs input 0 len)
+           (ParserState (subs input len (count input))
+                        (.values state)))))
