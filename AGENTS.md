@@ -49,6 +49,42 @@ If you are told to create a file, then only create it. Do not try to execute it 
   around it. Files must be pure ASCII (docs/toccata-style.md): multi-byte
   UTF-8 characters corrupt the dump's byte spans from that character to EOF.
 
+* When trying to fix a syntax error in a `.toc` file (unbalanced or
+  mis-nested parens/brackets, missing tokens), use the structural
+  editing tool (`tools/toc-edit/toc_edit.py`) — not hand-edits of node
+  text. Verify with a STACK-BASED nesting check, never a count-based
+  one: on 2026-09-26 a hand-written `.toc` probe carried a `)`
+  mis-nested inside a `[]` that a count check passed, and the whole
+  bisection built on it had to be retracted (docs/parser-generator-
+  plan.md, item-10 as-built note UPDATE 8). Note: `check` must pass
+  (exit 0) before the tool will work on a file — it cannot repair a
+  file that fails `new-toc`; for such files do the minimal hand edit
+  and say so.
+
+* Paren/quote-heavy lines: rely on `toc_edit.py` for structural edits
+  (it splices verbatim spans — no escaping involved). When the tool
+  is unavailable (the file fails `check`) and a hand edit is
+  required, do NOT use the edit tool's text matching on lines dense
+  with nested quotes and parens — the escaping is error-prone (on
+  2026-09-27 two consecutive edit calls on such a line removed the
+  wrong paren and added a stray quote, each needing an od-dump
+  corrective pass). Instead do a BYTE-EXACT rewrite: a small Python
+  script that locates the line (by a unique plain-text substring) and
+  replaces the whole line with the desired bytes, then re-run the
+  stack-based nesting check.
+
+* Core-API gotchas that produced three consecutive bogus
+  "toolchain crash" diagnoses on 2026-09-26 — CHECK THESE BEFORE
+  blaming new-toc: (1) `get` on a Vector returns a MAYBE (`Some
+  element` / `None`), not the bare element — use `(extract (get v
+  i))`; a raw Maybe compared to a bare value is silently `no`/false,
+  and `type-name` printing `Some` is CORRECT, not corruption. (2)
+  `+` takes EXACTLY 2 args — `(+ a b c)` is invalid source and
+  makes new-toc abort (silently, or with `Wrong number of args for
+  '+'`). Both are in docs/toccata-style.md (Core API); read that
+  file before writing any probe (as the rule above already
+  requires).
+
 * No local symbol may shadow a symbol from the core namespace — new-toc codegen emits colliding C identifiers (see docs/new-compiler-plan.md, Verified facts).
 
 * new-toc diagnostics rules:

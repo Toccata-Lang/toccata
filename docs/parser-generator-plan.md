@@ -458,15 +458,68 @@ item: this file + AGENTS.md. Generated code follows
     correct on every node, `Ref` / `String` / leaf ctors are leaves,
     container fields hold their children's IR).
 
-- [ ] **4b. Emitter v3: render (per-ctor source emission)**
-  Extend `interpreter/intrp-emit.toc` with the render phase: a plain
-  `defn` walking the IR with context (enclosing rule name +
-  helper-name prefix) that emits source per ctor exactly per the
-  Ctor table — skip-at-entry in every parser entry; grouped-literal
-  Any; fast/slow Many; `Ref` → named call; `Concat` → flatten-join;
-  `Node` → `raw/<name>` ctor call + auto-loc; `Ignore` →
-  parse-and-discard; `AlwaysSucceed` / `Error`. No module assembly
-  yet — the render functions return source lines for their node.
+- [ ] **4b.1. Emitter v3: render — leaf ctors**
+  Extend `interpreter/intrp-emit.toc` with render functions for the
+  leaf ctors, exactly per the Ctor table: `CharRange` / `NotChar`
+  (one-char parser — skip first, then pred; let-free, inlined at use
+  sites); bare `String` (multi-char literal: `(str-prefix? S input)`
+  + N `take-char` calls; N=1 for one char; let-free); `Ref` (a call
+  to the named rule over the threaded state); `AlwaysSucceed` /
+  `Error` (`(ParserMatch <v> state)` / `(ParserError MSG state)`).
+  No context needed yet.
+  - Done when: the library loads clean; a temporary probe (deleted
+    before the commit) renders each leaf shape and each emitted
+    source is hand-verified against the Ctor table.
+
+- [ ] **4b.2. Emitter v3: render — wrapper ctors**
+  Extend the render with the wrappers: `Ignore` (parse-and-discard:
+  `(parse-then (<ref> state) (fn [_ s2] <rest>))`); `Concat` (parse
+  the children in sequence, flatten-join their string values into
+  ONE string); `Node` (the child's value vector spread as
+  `(raw/<name> v0 ... vN (state/state-line s-entry))` — the auto-
+  loc). Render-child-then-wrap; no lifting yet.
+  - Done when: the library loads clean; a temporary probe (deleted
+    before the commit) renders a small grammar exercising all three
+    wrappers and each emitted source is hand-verified (the discard-
+    fn shape, the join, the ctor call with the auto-loc field).
+
+- [ ] **4b.3. Emitter v3: render — `All`**
+  Nested `parse-then` (site-(c)); value = vector of its non-`Ignore`
+  sub-values, UNLESS `Node`-wrapped.
+  - Done when: the library loads clean; a temporary probe (deleted
+    before the commit) renders an `All` containing an `Ignore`
+    member and the emitted source is hand-verified (nested
+    parse-then, the `Ignore` contributing nothing to the value
+    vector).
+
+- [ ] **4b.4. Emitter v3: render — `Any`**
+  Nested `parse-or` (site-(a)); ≥2 bare-String alts collapse into
+  ONE inlined grouped cond (the item-8 grouped-literal form); anon-
+  ymous alts lifted to index-path helpers (this is where the helper-
+  name-prefix context first becomes real); ALT ORDER IS SEMANTICS —
+  the grammar's ordering is preserved verbatim.
+  - Done when: the library loads clean; a temporary probe (deleted
+    before the commit) renders an `Any` with (a) ≥2 bare-String
+    alts, (b) one char-level alt, and (c) one anonymous non-char-
+    level alt, and the emitted source is hand-verified (the grouped
+    cond, the lifted helper name, the alt order).
+
+- [ ] **4b.5. Emitter v3: render — `Many`**
+  Char-level child → fast path (`<name>-char` set-predicate defn +
+  `read-run` wrapper, the run as ONE string); otherwise slow path
+  (lifted child + site-(b) acc-recursion loop, value = vector).
+  - Done when: the library loads clean; a temporary probe (deleted
+    before the commit) renders a char-level `Many` and a non-char-
+    level `Many`, and the emitted source is hand-verified (the
+    fast/slow split, the read-run wrapper, the acc loop).
+
+- [ ] **4b.6. Emitter v3: render — rule entry + context plumbing**
+  `Rule` → module-level `(defn <name> [state] ...)` source lines;
+  thread the context (enclosing rule name + helper-name prefix)
+  through all the render functions; skip-at-entry in every parser
+  entry (rule defns, lifted helpers, inlined literal / one-char
+  bodies, fast-path run wrappers). No module assembly yet — the
+  render functions return source lines for their node.
   - Done when: the library loads clean; a temporary probe (deleted
     before the commit) renders a hand-written 3-rule grammar (one
     char-level, one `Node`-tagged with a self-`Ref`, one mutual-`Ref`

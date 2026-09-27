@@ -27,14 +27,20 @@ applies).
 2. If there is no unchecked item: print `ALL ITEMS COMPLETE` and stop.
    Do no other work.
 3. Implement **exactly that one item**.
-   - FIRST run the plan's **toolchain health gate** (its Ralph-loop
-     protocol section): `make emit-pred` must pass on the committed
-     state before you edit anything. If it fails with silent crashes
-     that survive the 5-retry rule, the window is degraded — do NOT
-     edit source to chase it; record the window state (which files
-     crash, retry counts) in the plan's **"As-built notes"**, commit
-     that note, explain it in the end-of-run report, and stop (NOT
-     `STUCK` — a degraded window is transient; the loop continues).
+   - There is NO universal pre-build gate. In particular, `make
+     emit-pred` is EXPECTED TO FAIL during the grammar/emitter rewrite
+     items (3, 4a, 4b, 4c) until item 5 re-blesses the want-files — a
+     failing `make emit-pred` there is the normal mid-transition state,
+     not a broken toolchain. Apply the plan's **Toolchain policy**
+     reactively instead: assume `new-toc` is perfect until proven
+     otherwise; on any failed build, capture and read its stderr; a
+     silent crash retries up to 5 times, then a stack-based
+     paren/nesting check and a known-good control file before the
+     toolchain is blamed; a 5/5 silent abort with balanced parens and a
+     healthy control IS evidence about the toolchain — record it in the
+     plan's **"As-built notes"**, commit that note, explain it in the
+     end-of-run report, and stop (NOT `STUCK` — a toolchain window is
+     transient; the loop continues).
    - Follow the settled design in the plan file. Do not redesign. Do
      not edit the task items themselves — only check the box.
    - If you hit a genuine design gap the plan does not cover: stop,
@@ -53,8 +59,8 @@ applies).
    - Append a brief **as-built note** for the completed item under
      the plan's **"As-built notes"** section (what you actually
      built, any deviation from the plan's prediction — expected none
-     — and how you verified), so item 18's final verification has
-     the v1 → v2 record to check against.
+     — and how you verified), so the final acceptance (item 7) and
+     the owner have the record to check against.
    - Check the box in `docs/parser-generator-plan.md`.
    - Commit your work (code + checkbox + any plan notes) with a
      message starting `parser-gen item N: <what changed>`.
@@ -66,18 +72,17 @@ applies).
 - Never use `sudo`. Never make the `toccata` Makefile target.
 - The hand-written emitter / grammar / driver sources may use inline
   C freely. The *generated* module (`interpreter/gen-rdr.toc`) must
-  contain NO inline C — the emitter emits pure Toccata source (the
-  plan's protocol note "NEVER generate inline code"); if an item
-  seems to require inline C in the generated output, that is
+  contain NO inline C — the emitter emits pure Toccata source; if an
+  item seems to require inline C in the generated output, that is
   STUCK/owner, not a fix.
 - `new-toc` is a build crutch — its behavior is not a design
   constraint, but everything you write *and* everything you generate
   must compile and run under it.
-- Builds must be clean per the plan's toolchain health gate: zero
-  malloc/free diff and zero remaining nodes, subject to the
-  same-window HEAD baseline-drift exception the plan's protocol
-  defines (leak == the committed state's baseline measured in the
-  same window, recorded in the as-built note).
+- Builds must be clean: zero leaks and 0 remaining nodes on the
+  success path (the plan's Test strategy). There is NO baseline-drift
+  exception — the plan's Toolchain policy disowns baseline-drift
+  bookkeeping; a nonzero leak or remaining-node count is a real failure
+  to fix within the item (or STUCK if it cannot be).
 - Real sources live in `interpreter/`; throwaway probes in `scratch/`
   (never committed from there). `interpreter/gen-rdr.toc` is a build
   artifact written by the driver — never commit it.
