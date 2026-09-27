@@ -79,6 +79,12 @@ builds the code.
   core names may not be shadowed. Top-level symbols (`def`/`defn`/`defp`,
   types, ctors) must not collide within the same namespace.
 
+* A top-level symbol may not start with `vector` — the parser lexes such a
+  name as the `vector` token followed by the remainder (`vectorx` becomes
+  `vector` `x`; `vector-arg-exprs` fails with `Undefined symbol: '-arg-exprs'`),
+  so a `defn` named `vector-foo` mis-parses. Pick a different prefix
+  (`vec-foo`).
+
 ## Modules
 
 * `add-ns` module paths are relative to the importing file's directory and are
