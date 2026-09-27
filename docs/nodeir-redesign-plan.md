@@ -596,3 +596,36 @@ rendered line matches the 4b.1 CharRange baseline shape (skip-at-
 entry, one-char test, range pred, take-char, the error message).
 New durable fact (mirrored to new-compiler-plan.md Verified facts):
 the deftype-rename hazard above. No other deviation from the plan.
+
+### Task 7 (docs updated) — 2026-09-27
+
+Updated the two docs the task names. (1) The Settled section of
+`docs/parser-generator-plan.md`, the Phase 1 (analyze) paragraph: the
+final sentence ("The IR carries classification … plus the structure
+the render needs") now states the final shape explicitly — `NodeIR
+[node char-level?]`, `node` the `IRNode` multi-ctor deftype (13 ctors
+mirroring the grammar's, bare `String` → `Str` for the core
+collision), named fields unique across every type in the build (the
+render phase uses direct `.field` getters), the `char-level?`
+classification rule. (2) The header comment of
+`interpreter/intrp-emit.toc` (node 0, a comment node — `toc_edit
+replace` with the full new comment text, new-toc-validated): the
+"IR carries the classification … raw fields on leaves, child IRs on
+containers" sentence now describes `NodeIR [node char-level?]` and
+the `IRNode` multi-ctor deftype, cross-referencing this plan. The
+historical DEVIATION paragraph in the header and the IRNode
+deftype's "multi-ctor replacement for the old NodeIR's positional
+data vector" note are migration-history, not shape descriptions —
+left as-is. No other file touched; the Phase 2 ctor table's "bare
+`String`" row refers to the grammar's ctor (unchanged) and was
+left.
+
+Verified: `check` exit 0; library loads clean (`*** Loaded
+interpreter/intrp-emit.toc`, exit 134, captured stderr 21 lines,
+non-empty); grep confirms no stale reference to the positional
+`data` vector (no `[kind`, `data vector`, `positional`, `NodeIR2`,
+or `` `data` `` in the Settled section of parser-generator-plan.md
+or the intrp-emit.toc header — the only "positional data vector"
+mention left in the .toc file is the IRNode comment's
+migration-history line). No deviation from the plan. This completes
+Tasks 1–7.

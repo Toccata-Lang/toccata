@@ -265,9 +265,14 @@ shape, the dispatch is the parameter split: `(defn h [v]
 After `recurse` reassembles a node, container ctors' fields hold
 children's IR values; leaves hold raw fields. `Ref` and `String`
 are leaves, so the fold terminates structurally even though the
-generated reader is recursive. The IR carries classification
-(`char-level?` — CharRange / NotChar / one-char String; Any iff all
-alts; Rule / Many iff child) plus the structure the render needs.
+generated reader is recursive. The IR is `NodeIR [node
+char-level?]`: `node` is the `IRNode` multi-ctor deftype — 13 ctors
+mirroring the grammar's (bare `String` → `Str`, since a ctor named
+`String` collides with the core `String` type), with named fields
+unique across every type in the build (so the render phase uses
+direct `.field` getters); `char-level?` is `Some None` iff the node
+classifies a single char (CharRange / NotChar / one-char Str; Any
+iff all alts; Rule / Many iff child).
 
 **Phase 2 — render.** A plain `defn` walks the IR with context
 (enclosing rule name + helper-name prefix) and emits source per ctor:
