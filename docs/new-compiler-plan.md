@@ -1154,6 +1154,12 @@ rules; each form's rule arrives with its phase.
   fielded ctor of that name (order-dependent) — that is how
   `intrp-ast.toc` coexists with `Expression/Inline [type-expr c-code
   loc]` and a bare `TopLevel` `Inline`.
+- **String concatenation with a Vector operand renders the vector with
+  `[ ]` and space-joined elements, spacing not normalized
+  (2026-09-27, parser-gen item 3)**: observed `"(Ref " name ")"` nested
+  in such a vector printing `(Ref  name )` (an extra space appears).
+  Do not byte-compare `str-vect`-style debug output against
+  hand-written expectations.
 
 ## Settled (continued)
 

@@ -1,13 +1,16 @@
-;; intrp-grammar.toc - parser-combinator grammar data.
+;; intrp-grammar.toc - parser-combinator grammar data (v3).
 ;;
-;; The 67a1125 combinator grammar (expressions only: int/float/string/
-;; symbol/call), ported to new-toc. ParserState and ParserResults live
-;; in the helper layer (intrp-rdr.toc); this file carries only the
-;; ParserCombinator deftype and the grammar rules as data.
+;; The ParserCombinator deftype (v3 ctor set: CharRange, NotChar, All,
+;; Any, Many, Rule, Ref, Node, Concat, Ignore, AlwaysSucceed, Error,
+;; plus bare String literals) and the token and literal rules of the
+;; scope-(a) grammar, as purely acyclic data. Every reference from one
+;; rule to another is a Ref - no Rule value ever appears inside
+;; another rule, so the rules carry no ordering constraints.
+;; Whitespace and comments are helper-layer (intrp-state.toc), never
+;; grammar.
 ;;
 ;; No `!` annotations on the multi-field ParserCombinator ctors
-;; (new-toc hazard). The Recur `f` field is data - the emitter ignores
-;; it (self-recursion only).
+;; (new-toc hazard).
 ;;
 ;; This file is a LIBRARY (no main).
 
@@ -57,11 +60,21 @@
       (Rule (.name v) (f (.parser v))))
     (str-vect [x]
       (flat-map ["(Rule " (.name x) " " (.parser x) ")"] str-vect)))
-  (Recur [f]
+  (Ref [name]
     (recurse [v f]
       v)
     (str-vect [x]
-      ["(Recur)"])))
+      ["(Ref " (.name x) ")"]))
+  (Node [name parser]
+    (recurse [v f]
+      (Node (.name v) (f (.parser v))))
+    (str-vect [x]
+      (flat-map ["(Node " (.name x) " " (.parser x) ")"] str-vect)))
+  (Concat [parsers]
+    (recurse [v f]
+      (Concat (map (.parsers v) f)))
+    (str-vect [x]
+      (flat-map ["(Concat " (flat-map (.parsers x) str-vect) ")"] str-vect))))
 
 (def digits (Rule "digits" (CharRange "0" "9")))
 
@@ -69,101 +82,39 @@
 
 (def lower-case (CharRange "a" "z"))
 
-(def linear-whitespace (Any ["," " " "\t"]))
-(def whitespace (Many linear-whitespace))
-(def skip-ws (Ignore whitespace))
-
-; Keywords and Special Forms
-(def def-keyword "def")
-(def defmacro-keyword "defmacro")
-(def defn-keyword "defn")
-(def deftype-keyword "deftype")
-(def defp-keyword "defp")
-(def extend-type-keyword "extend-type")
-(def add-ns-keyword "add-ns")
-(def inline-keyword "inline")
-(def main-keyword "main")
-
-; Sub-Expression Special Forms
-(def fn-keyword "fn")
-(def let-keyword "let")
-(def do-keyword "do")
-(def superposition-keyword "|")
-(def threading-keyword "->")
-(def match-keyword "match")
-
-; Type Constraints
-(def type-constraint-prefix "!")
-
-; Special Symbols
-(def file-symbol "_FILE_")
-(def line-symbol "_LINE_")
-
-; Delimiters
-(def open-paren "(")
-(def close-paren ")")
-(def open-bracket "[")
-(def close-bracket "]")
-(def open-brace "{")
-(def close-brace "}")
-
-; Comments
-(def comment-start ";")
-
-; Literals
-(def single-quote "'")
-(def double-quote "\"")
-
 ; Parser Rules for Toccata Constructs
 (def alpha (Rule "alpha" (Any [lower-case upper-case])))
 (def symbol-start
   (Rule "symbol-start"
-        (Any [alpha "." "_" "<" ">" "=" "+" "-" "*" "/"])))
+        (Any [(Ref "alpha") "." "_" "<" ">" "=" "+" "-" "*" "/"])))
 (def rest-of-symbol
   (Rule "rest-of-symbol"
-        (Any [alpha digits "." "_" "<" ">" "=" "+" "-" "*" "?" "!"])))
+        (Any [(Ref "alpha") (Ref "digits") "." "_" "<" ">" "=" "+" "-" "*" "?" "!"])))
 
-(def symbol (Rule "symbol" (All [symbol-start (Many rest-of-symbol)])))
+(def symbol
+  (Rule "symbol"
+        (Node "Symbol"
+              (Concat [(Ref "symbol-start") (Many (Ref "rest-of-symbol"))]))))
 
 ; Number Literals
-(def int-literal (Rule "integer" (All [digits (Many digits)])))
-(def float-literal (Rule "float" (All [(Many digits) "." (Many digits)])))
+(def int-literal
+  (Rule "int-literal"
+        (Node "IntegerLit"
+              (Concat [(Ref "digits") (Many (Ref "digits"))]))))
 
 ; String Literals
 (def escaped-char (Rule "escaped-char" (All ["\\" (Any ["\\" "\"" "n" "r" "t"])])))
-(def double-quoted-string (Rule "double-quoted-string" (All ["\""
-                                                             (Many (Any [(NotChar "\"") escaped-char]))
-                                                             "\""])))
-
-;; sub-expression is the Recur target of `expression` (self-recursion);
-;; the emitter ignores the function and reads the enclosing rule name.
-;; The bare def is a forward declaration (new-toc `*** declare`); the
-;; defn follows `expression`, which it returns.
-(def sub-expression)
-
-; Vector and Hash Map Expressions
-(def vector-expression (Rule "vector-expression" (All [open-bracket (Many sub-expression) close-bracket])))
-(def hash-map-expression (Rule "hash-map-expression" (All [open-brace (Many (All [sub-expression sub-expression])) close-brace])))
+(def string
+  (Rule "string"
+        (Node "StringLit"
+              (All [(Ignore "\"")
+                    (Concat [(Many (Any [(NotChar "\"") (Ref "escaped-char")]))])
+                    (Ignore "\"")]))))
 
 ; Expressions
 (def expression
   (Rule "expression"
-        (Any [int-literal
-              double-quoted-string
-              symbol
-              (All [open-paren
-                    (Recur sub-expression)
-                    (Many (Recur sub-expression))
-                    close-paren])
-              ;; vector-expression
-              ;; hash-map-expression
-              ])))
-(defn sub-expression []
-  expression)
-
-; Type Constraints
-(def min-constraint (Rule "min-constraint" (All [open-paren "min" int-literal close-paren])))
-(def max-constraint (Rule "max-constraint" (All [open-paren "max" int-literal close-paren])))
-(def min-length-constraint (Rule "min-length-constraint" (All [open-paren "min-length" int-literal close-paren])))
-(def max-length-constraint (Rule "max-length-constraint" (All [open-paren "max-length" int-literal close-paren])))
-(def length-constraint (Rule "length-constraint" (All [open-paren "length" int-literal close-paren])))
+        (Any [(Ref "int-literal")
+              (Ref "string")
+              (Ref "symbol")
+              (All ["(" (Ref "expression") (Many (Ref "expression")) ")"])])))
