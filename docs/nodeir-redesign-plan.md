@@ -377,3 +377,69 @@ ch=x; lit=a / lit=abc; ref-name=foo; as-value String "abc" /
 Vector []; error-msg="expected a token"), `cl?` `Some` exactly for
 CharRange / NotChar / the 1-char Str and `None` for the rest.
 No deviation from the plan.
+
+### Task 4b (composite builders migrated) — 2026-09-27
+
+Rewrote the 7 composite builders in `interpreter/intrp-emit.toc` to
+construct `(NodeIR2 (<IRNode ctor> ...) <cl?>)`: `ir-any-dispatch` →
+`(NodeIR2 (Any cs) (Some None))` / `(NodeIR2 (Any cs) None)` (the
+`ir-any` wrapper unchanged); `ir-all` → `(NodeIR2 (All (.parsers v))
+None)`; `ir-many` → `(NodeIR2 (Many c) (.cl? c))`; `ir-rule` →
+`(NodeIR2 (Rule (.name v) c) (.cl? c))`; `ir-node` → `(NodeIR2 (Node
+(.name v) (.parser v)) None)`; `ir-concat` → `(NodeIR2 (Concat
+(.parsers v)) None)`; `ir-ignore` → `(NodeIR2 (Ignore (.parser v))
+None)`. The `analyze-node` defp annotation is now `! -> NodeIR2`. All
+9 node edits (7 defns + the defp + the container-ctors comment) via
+`toc_edit replace`, each new-toc-validated.
+
+DEVIATION from the plan's prediction (one line, forced by the actual
+code): the plan said `all-ir-char-level?` is "unchanged in body (it
+calls `char-level`)" — it does NOT call the `char-level` helper (that
+helper is defined later in the file; new-toc is single-pass, so the
+call would not compile); it read `(.char-level? ir)` directly. After
+Task 4a its inputs are `NodeIR2` values, whose field is `cl?` (and
+`.char-level?` resolves to the OLD `NodeIR`'s field — a mis-read on a
+`NodeIR2`), so the body had to change to `(.cl? ir)` for `ir-any` to
+work at all. Everything else matches the plan.
+
+Verified fact (settles the child-field typing the plan left implicit):
+the `IRNode` child fields (`any-alts`, `all-parsers`, `many-child`,
+`rule-child`, `node-child`, `concat-parsers`, `ignore-child`) hold
+**NodeIR2 wrappers** (the child IRs), not bare `IRNode`s — the same
+child threading as the old `.data` vectors. The plan's Task 5a/5b
+readings already implied this (`ir-value-shape (extract (get
+(.any-alts ir) 0))` then dispatches on `(.node …)`), but a probe
+printer that assumed bare `IRNode` children aborts with
+`print-node: unknown ctor: NodeIR2` — the first 4b probe did exactly
+that and had to be fixed (children printed via a `print-child` helper
+that reads `(.node c)` / `(.cl? c)`).
+
+Expected mid-migration state (per the plan, confirmed): the render
+path (still `.kind` / `.data`) is runtime-broken — it now mis-reads
+`NodeIR2` values — but the library loads clean and no committed
+consumer calls it; tasks 5a/5b restore it.
+
+Verified: `check` exit 0; library loads clean (`*** Loaded
+interpreter/intrp-emit.toc`, exit 134, captured stderr 21 lines,
+non-empty). Temp probe `interpreter/ir4b-probe.toc` (deleted after):
+`add-ns`ed `emit` + `grammar`, ran `emit/analyze` over a 5-rule
+grammar covering all 13 ctors (r1 Rule+CharRange; r2 Rule+Any of
+CharRange+NotChar; r3 Rule+Node+Concat+Ref+Many; r4 Rule+All+Ignore+
+Ref; r5 Rule+Any of AlwaysSucceed+Error) plus the 13 standalone ctor
+shapes (CharRange, NotChar, 3-char String, Ref, AlwaysSucceed-String,
+AlwaysSucceed-empty-Vector, Error, Any, All, Many, Node, Concat,
+Ignore), printing per shape the `IRNode` ctor, every named field via
+its getter, and the `cl?` type-name, recursing into child IRs. The
+printer's mutually recursive defns needed crutch declarations (`(def
+print-node)` etc. — single-pass; the established `render-child`
+pattern). The probe's first build was a transient segfault (clean
+load, no error message); the retry was clean — the standard policy.
+Ran clean: exit 0, malloc diff 0, remaining nodes 0. All 18 printed
+lines hand-verified (output in reverse creation order): correct ctor
+per shape; named fields correct (lo/hi, ch, lit, ref-name, rule-name,
+node-name, error-msg, as-value type+count); `cl?` `Some` exactly for
+CharRange / NotChar / the char-level Any (r2, s8) / Many-over-
+CharRange (s10) and their delegating Rules (r1, r2), `None` for all
+the rest — including the 3-char Str, the non-char-level Any (r5), and
+Node / Concat / All / Ignore / Ref / AlwaysSucceed / Error. No other
+deviation from the plan.
