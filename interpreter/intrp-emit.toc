@@ -365,3 +365,296 @@
 ;; render-error [ir sv]: (state/ParserError MSG sv) (ctor table).
 (defn render-error [ir sv]
   (vector (str "(state/ParserError " (render-literal (extract (get (.data ir) 0))) " " sv ")")))
+
+;; =====================================================================
+;; Phase 2 - render (item 4b.2): the wrapper ctors.
+;;
+;; The wrappers render the child(ren) first, then wrap the result. Each
+;; returns source LINES (a Vector of Strings): zero or more lifted
+;; helper defn lines (none yet - lifting is 4b.4/4b.5), then ONE final
+;; line - a single Toccata expression that, with the state variable sv
+;; in scope, evaluates to a ParserResults.
+;;
+;;   Ignore [p]  - parse-and-discard: parse the child, discard its
+;;                 value, thread the state. Standalone value is the unit
+;;                 (empty-vector); the enclosing All (4b.3) excludes it
+;;                 from the value vector. The discard fn binds _ (the
+;;                 child's value) and threads s2.
+;;   Concat [ps] - parse the children in sequence (nested parse-then),
+;;                 flatten-join their string values into ONE string.
+;;   Node [n p]  - the child's value becomes the raw-AST ctor call
+;;                 (raw/<n> <args...> <auto-loc>); the auto-loc is the
+;;                 line where the form started (the entry state sv,
+;;                 whitespace-skipped).
+;;
+;; The render dispatch (render-child) and the wrapper renders are
+;; mutually recursive (the wrappers render their children via the
+;; dispatch). new-toc is single-pass (a defn body may not reference a
+;; LATER top-level symbol), so the dispatch is crutch-declared
+;; ((def render-child)) before the wrappers, and its defn comes after
+;; the wrappers it calls.
+
+;; --- value-shape helpers (for Concat's join and Node's spread) -------
+
+;; char-level [ir]: true iff the IR node classifies a single char
+;; (char-level? is Some).
+(defn char-level [ir]
+  (str= (type-name (.char-level? ir)) "Some"))
+
+;; ir-value-shape [ir]: "string" iff the position's value is a single
+;; String; "vector" iff it is a Vector of strings. Structural (the IR),
+;; per the value-shape discipline (every alt of an Any feeding a shared
+;; position yields the same shape).
+;;   - char-level leaves (CharRange / NotChar / String) and Concat
+;;     -> "string"
+;;   - Many -> "string" iff char-level (fast path, one run string),
+;;     else "vector" (slow path, vector of child values)
+;;   - All -> "vector" (vector of non-Ignore sub-values)
+;;   - Any / Rule -> the first-alt / child's shape
+;;   - AlwaysSucceed -> the constant's type (String -> "string",
+;;     Vector -> "vector")
+;;   - Ref / Node / Ignore / Error -> abort (Ref needs the rule set,
+;;     supplied at module assembly 4c.2; the rest are not value sources
+;;     in scope (a))
+(defn ir-value-shape [ir]
+  (let [k (.kind ir)]
+    (cond (str= k "CharRange")
+      "string"
+
+      (str= k "NotChar")
+      "string"
+
+      (str= k "String")
+      "string"
+
+      (str= k "Concat")
+      "string"
+
+      (str= k "All")
+      "vector"
+
+      (str= k "Any")
+      (let [cs (.data ir)]
+        (ir-value-shape (extract (get cs 0))))
+
+      (str= k "Rule")
+      (let [d (.data ir)]
+        (ir-value-shape (extract (get d 1))))
+
+      (str= k "Many")
+      (let [c (extract (get (.data ir) 0))]
+        (cond (char-level c)
+          "string"
+
+          "vector"))
+
+      (str= k "AlwaysSucceed")
+      (let [v (extract (get (.data ir) 0))]
+        (cond (str= (type-name v) "String")
+          "string"
+
+          (str= (type-name v) "Vector")
+          "vector"
+
+          (abort (str "ir-value-shape: unsupported AlwaysSucceed value: " (type-name v)))))
+
+      (abort (str "ir-value-shape: unsupported kind: " k)))))
+
+;; ir-value-arity [ir]: the static arity of a "vector"-shaped value (the
+;; number of ctor args a Node spreads it into). Only meaningful when
+;; ir-value-shape is "vector".
+;;   - All -> the count of non-Ignore children
+;;   - Any / Rule -> the first-alt / child's arity
+;;   - Many (slow) -> abort (dynamic arity - not spreadable; not in
+;;     scope (a))
+(defn ir-value-arity [ir]
+  (let [k (.kind ir)]
+    (cond (str= k "All")
+      (let [cs (.data ir)]
+        (reduce cs 0
+                (fn [acc c]
+                  (cond (str= (.kind c) "Ignore")
+                    acc
+
+                    (+ acc 1)))))
+
+      (str= k "Any")
+      (let [cs (.data ir)]
+        (ir-value-arity (extract (get cs 0))))
+
+      (str= k "Rule")
+      (let [d (.data ir)]
+        (ir-value-arity (extract (get d 1))))
+
+      (abort (str "ir-value-arity: unsupported kind: " k)))))
+
+;; vec-arg-exprs [v n]: n arg expressions extracting elements 0..n-1
+;; of the value vector bound to variable v: (extract (get v i)).
+(defn vec-arg-exprs [v n]
+  (cond (= n 0)
+    (vector)
+
+    (conj (vec-arg-exprs v (- n 1))
+          (str "(extract (get " v " " (- n 1) ")"))))
+
+;; node-value-args [child-ir v]: the ctor arg expressions (no auto-loc)
+;; for a Node whose child has IR child-ir and whose value is bound to
+;; variable v. A "string"-shaped child contributes one arg (v); a
+;; "vector"-shaped child contributes its arity many args (extracted
+;; elements).
+(defn node-value-args [child-ir v]
+  (let [shape (ir-value-shape child-ir)]
+    (cond (str= shape "string")
+      (vector v)
+
+      (str= shape "vector")
+      (vec-arg-exprs v (ir-value-arity child-ir))
+
+      (abort (str "node-value-args: bad shape: " shape)))))
+
+;; concat-fragment [child-ir vi]: the string fragment for a Concat child
+;; whose value is bound to variable vi. A "string" value is used as-is;
+;; a "vector" value is flatten-joined to one string.
+(defn concat-fragment [child-ir vi]
+  (let [shape (ir-value-shape child-ir)]
+    (cond (str= shape "string")
+      vi
+
+      (str= shape "vector")
+      (str "(reduce " vi " \"\" (fn [acc s] (str acc s)))")
+
+      (abort (str "concat-fragment: bad shape: " shape)))))
+
+;; concat-fragments [cs vnames i]: the string fragments for children
+;; 0..i-1 (a Vector of String, in child order). Recurses i down to 0
+;; (conj appends to the end, so the forward 0->n order is preserved).
+(defn concat-fragments [cs vnames i]
+  (cond (= i 0)
+    (vector)
+
+    (conj (concat-fragments cs vnames (- i 1))
+          (concat-fragment (extract (get cs (- i 1))) (extract (get vnames (- i 1)))))))
+
+;; join-strings [sep vs]: vs joined with sep (a String).
+(defn join-strings [sep vs]
+  (cond (= (count vs) 0)
+    ""
+
+    (= (count vs) 1)
+    (extract (first vs))
+
+    (str (join-strings sep (butlast vs)) sep (extract (last vs)))))
+
+;; build-join [cs vnames]: the Toccata source of the Concat join over the
+;; value variables. Each child's value is a string fragment (the value
+;; var for string-shaped children, a flatten for vector-shaped children);
+;; the fragments are joined with (str ...).
+(defn build-join [cs vnames]
+  (let [n (count cs)]
+    (cond (= n 0)
+      "\"\""
+
+      (= n 1)
+      (concat-fragment (extract (get cs 0)) (extract (get vnames 0)))
+
+      (let [frags (concat-fragments cs vnames (count cs))]
+        (str "(str " (join-strings " " frags) ")")))))
+
+;; gen-vnames [n]: n value variable names ["v0" ... "v(n-1)"].
+(defn gen-vnames [n]
+  (cond (= n 0)
+    (vector)
+
+    (conj (gen-vnames (- n 1)) (str "v" (- n 1)))))
+
+;; --- the render dispatch (crutch-declared; the wrappers call it) -----
+
+(def render-child)
+
+;; concat-tail [cs i sv vnames join]: the source lines for Concat
+;; children i..n-1, threading the state. Returns a Vector of Strings:
+;; the children's helper lines, then ONE final line - the nested
+;; parse-then over sv (the base case is the final ParserMatch).
+(defn concat-tail [cs i sv vnames join]
+  (cond (= i (count cs))
+    (vector (str "(state/ParserMatch " join " " sv ")"))
+
+    (let [c (extract (get cs i))]
+      (let [res (render-child c sv)]
+        (let [E (extract (last res))]
+          (let [vname (extract (get vnames i))]
+            (let [snext (str "s" (+ i 1))]
+              (let [inner (concat-tail cs (+ i 1) snext vnames join)]
+                (let [inner-expr (extract (last inner))]
+                  (comp (comp (butlast res) (butlast inner))
+                        (vector (str "(parse-then " E " (fn [" vname " " snext "] " inner-expr ")"))))))))))))
+
+;; render-ignore [ir sv]: the Ignore wrapper (ctor table) - parse the
+;; child, discard the value (the fn binds _), thread the state; the
+;; standalone value is the unit (empty-vector).
+(defn render-ignore [ir sv]
+  (let [child (extract (get (.data ir) 0))]
+    (let [res (render-child child sv)]
+      (let [E (extract (last res))]
+        (comp (butlast res)
+              (vector (str "(parse-then " E " (fn [_ s2] (state/ParserMatch empty-vector s2))))")))))))
+
+;; render-concat [ir sv]: the Concat wrapper (ctor table) - parse the
+;; children in sequence (nested parse-then), flatten-join their string
+;; values into ONE string.
+(defn render-concat [ir sv]
+  (let [cs (.data ir)]
+    (let [n (count cs)]
+      (let [vnames (gen-vnames n)]
+        (let [join (build-join cs vnames)]
+          (concat-tail cs 0 sv vnames join))))))
+
+;; render-node [ir sv]: the Node wrapper (ctor table) - the child's value
+;; becomes the raw-AST ctor call (raw/<name> <args...> <auto-loc>); the
+;; auto-loc is the line where the form started (the entry state sv,
+;; whitespace-skipped).
+(defn render-node [ir sv]
+  (let [name (extract (get (.data ir) 0))]
+    (let [child (extract (get (.data ir) 1))]
+      (let [res (render-child child sv)]
+        (let [E (extract (last res))]
+          (let [args (node-value-args child "v")]
+            (let [auto-loc (str "(state/state-line (state/skip-whitespace " sv "))")]
+              (let [ctor-args (join-strings " " (comp args (vector auto-loc)))]
+                (comp (butlast res)
+                      (vector (str "(parse-then " E " (fn [v s2] (state/ParserMatch (raw/" name " " ctor-args ") s2))))")))))))))))
+
+;; render-child [ir sv]: the render dispatch - the source lines for ir
+;; over the state variable sv. The leaf ctors (4b.1) and the wrapper
+;; ctors (4b.2); the remaining ctors (Any / All / Many / Rule) are the
+;; later items (4b.3-4b.7).
+(defn render-child [ir sv]
+  (let [k (.kind ir)]
+    (cond (str= k "CharRange")
+      (render-char-range ir sv)
+
+      (str= k "NotChar")
+      (render-not-char ir sv)
+
+      (str= k "String")
+      (render-string ir sv)
+
+      (str= k "Ref")
+      (render-ref ir sv)
+
+      (str= k "AlwaysSucceed")
+      (render-always ir sv)
+
+      (str= k "Error")
+      (render-error ir sv)
+
+      (str= k "Ignore")
+      (render-ignore ir sv)
+
+      (str= k "Concat")
+      (render-concat ir sv)
+
+      (str= k "Node")
+      (render-node ir sv)
+
+      (abort (str "render-child: not yet implemented: " k)))))
