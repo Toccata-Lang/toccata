@@ -218,8 +218,11 @@ One ctor per source form; no desugared shapes; every ctor gets a
 - `Location [file line]`
 - `TopLevel`: `Defn [name param-list body loc]`, `Def [name value
   loc]`, `Defp [name param-list body loc]`, `DefType [type-name
-  ctors loc]`, `ExtendType [type-name methods loc]`, `Inline [c-code
-  loc]`, `Main [param-list body loc]`
+  ctors loc]`, `ExtendType [type-name methods loc]`, `Inline` (bare
+  reference to `Expression`'s `Inline [type-expr c-code loc]` — a
+  top-level inline form parses to that same ctor; the ctor-name-
+  globality hazard forbids a second fielded `Inline`, owner ruling
+  2026-09-26), `Main [param-list body loc]`
 - `Expression`: `Symbol [text loc]`, `IntegerLit [value loc]`,
   `StringLit [value loc]`, `Call [operator operands loc]`,
   `Let [bindings body loc]`, `Cond [clauses loc]` (flat clause
@@ -416,7 +419,7 @@ item: this file + AGENTS.md. Generated code follows
     shows `*** Loaded interpreter/intrp-state.toc` with no other
     error lines; `interpreter/intrp-rdr.toc` unmodified.
 
-- [ ] **2. Raw AST: `interpreter/intrp-raw-ast.toc`**
+- [x] **2. Raw AST: `interpreter/intrp-raw-ast.toc`**
   The deftypes per the Raw AST section: `Location`, `TopLevel`
   (7 ctors), `Expression` (12 ctors), the auxiliaries
   (`TypeConstraint`, `LetBinding`, `Clause`, `HashPair`,
@@ -585,3 +588,4 @@ to check against.
 
 - (2026-09-26, item 1) Created `interpreter/intrp-state.toc`: the ten kit pieces extracted byte-verbatim from `interpreter/intrp-rdr.toc` (verified by substring check of each original block against the new file), header comment rewritten for the library/namespaced-by-importer role. One self-inflicted transcription slip (a dropped `)` in `skip-comment`) was caught by a stack-based nesting check before the first successful load and fixed. Verified: `./new-toc interpreter/intrp-state.toc > /dev/null 2>err` prints `*** Loaded interpreter/intrp-state.toc` with no other error lines (trailing missing-main/Agent lines confirmed standard via the `intrp-ast.toc` control); `interpreter/intrp-rdr.toc` unmodified.
 - (2026-09-26, item 2, BLOCKED — owner input needed) Wrote `interpreter/intrp-raw-ast.toc` per the Raw AST section (Location; TopLevel 7 ctors; Expression 12 ctors; the 6 auxiliaries; str-vect on every ctor; no `!` annotations). It FAILS to load: `*** A type named 'Inline' was already defined. Re-defined at interpreter/intrp-raw-ast.toc: 109` — the settled section names BOTH `TopLevel/Inline [c-code loc]` and `Expression/Inline [type-expr c-code loc]` as fielded ctors, and the ctor-name-globality hazard (Inherited verified facts, 2026-09-26 item 2 bullet) forbids that. Probe in scratch (TopLevel's renamed to `TopInline`) loads clean, so the collision is the ONLY blocker — the rest of the file (all 26 other ctors, every str-vect) is verified good. The ambiguity also reaches the grammar: `Node "Inline"` tags in the Rule inventory (items 3/6a/6b) and the want files (item 5) cannot disambiguate two same-named ctors. The file is left in the worktree UNCOMMITTED (unverified); box left unchecked. Owner decision needed: which of the two `Inline` ctors is renamed (and the plan's Raw AST section + Rule-inventory `Node` names updated to match) — then item 2 is a one-line fix away from done.
+- (2026-09-26, item 2, BLOCK RESOLVED) Owner ruling: there is only ONE `Inline` — `Expression/Inline [type-expr c-code loc]` — added to `TopLevel` as a bare ctor reference (the style-doc mechanism: a bare name in a multi-ctor list references an existing ctor; order-dependent, so `Expression` is defined before `TopLevel` — the same shape as `intrp-ast.toc`). Applied: `Expression` moved above `TopLevel` with a comment; `TopLevel`'s fielded `Inline [c-code loc]` replaced by bare `Inline`. Verified: `./new-toc interpreter/intrp-raw-ast.toc > /dev/null` prints `*** Loaded interpreter/intrp-raw-ast.toc` with no other error lines (exit 134, trailing missing-main/Agent lines standard per the item-1 fact); `interpreter/intrp-ast.toc` unmodified. Consequence: `Node "Inline"` in the grammar unambiguously targets `Expression/Inline`; a top-level inline form parses to that same ctor as a `TopLevel` value.
