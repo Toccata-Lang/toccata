@@ -79,6 +79,10 @@ _CLEAN_LINE_PREFIXES = (
     "*** time-for-core ",
     "*** Loading ",
     "*** Loaded ",
+    # Printed for each bare forward declaration `(def name)`; info line,
+    # not an error (observed 2026-09-27 on interpreter/intrp-grammar.toc's
+    # `sub-expression` declaration; the file loads clean).
+    "*** declare ",
 )
 
 
