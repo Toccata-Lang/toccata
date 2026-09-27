@@ -1179,6 +1179,20 @@ rules; each form's rule arrives with its phase.
   prints `bac` (minimal control, clean build, malloc diff 0). Probe
   output lines appear in the opposite order to the calls — read probe
   output content-wise, never positionally.
+- **`type-name` prints a `typeName: <name>` debug line to stdout
+  unconditionally (2026-09-27, nodeir task 5b)**: confirmed present in
+  a probe build with only `-DCHECK_MEM_LEAK=1 -DSAFETY=1` (no
+  `-DSTATS`) — the noise is not gated by `-DSTATS`. Any probe that
+  dispatches on `type-name` gets this noise interleaved in its stdout;
+  strip `typeName: <name>` lines before comparing probe output.
+- **The `pr*` unit reversal breaks when newline-bearing printing is
+  interleaved (2026-09-27, nodeir task 5b)**: with the `typeName:`
+  debug noise interleaved among multiple `pr*` units, the output order
+  is no longer a plain unit reversal (units come out separated from
+  their labels) and the noise lines themselves are duplicated/dropped.
+  For byte-compare probes, build the whole expected output as ONE
+  string and `pr*` it as a single unit — a single unit prints
+  atomically and in order.
 
 ## Settled (continued)
 

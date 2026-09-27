@@ -492,3 +492,61 @@ AlwaysSucceed-Vector; arities 2 (All with one Ignore excluded), 2
 `type-name` prints a `typeName: <name>` debug line per call under
 `-DSTATS=1` — expected noise in probe output, not a result. No other
 deviation from the plan.
+
+### Task 5b (render dispatch + 9 render fns migrated) — 2026-09-27
+
+Rewrote `render-child` and the 9 render fns in
+`interpreter/intrp-emit.toc` to read `NodeIR2`'s named fields:
+`render-child` binds `k (type-name (.node ir))` and passes `(.node ir)`
+(the bare `IRNode`) to each per-ctor fn; the string-literal key is
+`"Str"` (was `"String"`). The render fns now take the `IRNode` and read
+the unique getters directly: `.lo`/`.hi` (char-range), `.ch`
+(not-char), `.lit` (string), `.ref-name` (ref), `.as-value` (always),
+`.error-msg` (error), `.ignore-child` (ignore — passed to
+`render-child`), `.concat-parsers` (concat), `.node-name`/`.node-child`
+(node). The vector-threading helpers (`concat-tail`, `node-value-args`,
+`concat-fragment(s)`, `build-join`, `gen-vnames`, `join-strings`,
+`vec-arg-exprs`) are unchanged. All 10 defns via `toc_edit replace`
+(each new-toc-validated); two first attempts (render-ignore,
+render-node) were rejected with `Missing ")"` — my snippets were each
+missing one closing paren (the paren-heavy-line hazard, AGENTS.md);
+fixed the snippets and re-ran. The splices left extra blank lines
+(unowned inter-node whitespace — the known limitation), collapsed with
+a byte-exact whitespace-only edit (this also removed double blanks
+left by the task 4a/4b/5a splices).
+
+No deviation from the plan: the Task 5a correction (getters apply to
+`(.node ir)`, not the wrapper) was applied as predicted — the render
+fns take the `IRNode` that `render-child` passes them, and the getters
+apply to that parameter.
+
+Verified: `check` exit 0; library loads clean (`*** Loaded
+interpreter/intrp-emit.toc`, exit 134, captured stderr 21 lines,
+non-empty). Recreated the 4b.1 (9 shapes) and 4b.2 (3 shapes) probes
+(in `interpreter/`, deleted after) against the migrated path,
+constructing `NodeIR2` values directly and rendering via
+`emit/render-child`. Each probe builds the WHOLE expected baseline
+output (shapes in reverse creation order; each shape's single emitted
+line + `L0` + `SHAPE <name>`; trailing newline) as ONE string and
+`pr*`s it as a single unit — see the new fact below: multi-unit probe
+output is no longer byte-comparable now that the render path's
+type-name dispatch interleaves newline-bearing debug noise. Both ran
+clean: exit 0, malloc diff 0, remaining nodes 0. With the
+runtime-stats tail (from `- Threads:`) and the `typeName:` noise
+stripped, the output is byte-identical to
+`scratch/nodeir-baseline-4b1.txt` (2375 bytes) and
+`scratch/nodeir-baseline-4b2.txt` (2405 bytes) — `cmp` clean on both.
+
+New durable facts (also appended to new-compiler-plan.md Verified
+facts):
+- `type-name` prints a `typeName: <name>\n` debug line to stdout
+  UNCONDITIONALLY — confirmed present in a probe build with only
+  `-DCHECK_MEM_LEAK=1 -DSAFETY=1` (no `-DSTATS`); the Task 5a note
+  attributed it to `-DSTATS=1`, it is not gated by that flag.
+- The `pr*` unit reversal (the recorded 4b.1 fact) holds only for a
+  clean unit stream: once newline-bearing debug printing is
+  interleaved (the `typeName:` noise), the multi-unit output order is
+  no longer a plain unit reversal (labels and content lines come out
+  separated) and the noise lines themselves are duplicated/dropped.
+  Byte-compare probes must `pr*` the whole expected output as a
+  single unit (a single unit prints atomically and in order).

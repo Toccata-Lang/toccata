@@ -93,11 +93,9 @@
   (NodeIR2 (CharRange (.lower v) (.upper v))
            (Some None)))
 
-
 (defn ir-not-char [v]
   (NodeIR2 (NotChar (.char v))
            (Some None)))
-
 
 ;; One-char String: char-level (the Ctor table's bare-String pred);
 ;; a longer literal is not char-level (no grammar node is one).
@@ -108,7 +106,6 @@
 
     (NodeIR2 (Str v)
              None)))
-
 
 ;; ir-any-dispatch / ir-any: the parameter split (per the plan's
 ;; Settled design) - the alts vector is computed once and passed as
@@ -149,7 +146,6 @@
   (NodeIR2 (Ref (.name v))
            None))
 
-
 (defn ir-node [v]
   (NodeIR2 (Node (.name v) (.parser v))
            None))
@@ -166,11 +162,9 @@
   (NodeIR2 (AlwaysSucceed (.value v))
            None))
 
-
 (defn ir-error [v]
   (NodeIR2 (Error (.msg v))
            None))
-
 
 ;; analyze-node: the fold's handler as a PROTOCOL (one extend-type
 ;; impl per ctor type - the v1 EBNF pattern). NOT a defn dispatching
@@ -323,8 +317,8 @@
 ;; render-char-range [ir sv]: the one-char parser (ctor table) - skip
 ;; first, then the range pred; the value the char consumed.
 (defn render-char-range [ir sv]
-  (let [lo (extract (get (.data ir) 0))
-        hi (extract (get (.data ir) 1))
+  (let [lo (.lo ir)
+        hi (.hi ir)
         SV (skip-expr sv)
         C (str "(subs " SV " 0 1)")
         msg (render-literal (str "expected a character in the range " lo "-" hi))]
@@ -335,7 +329,7 @@
 ;; render-not-char [ir sv]: the one-char parser (ctor table) - skip
 ;; first, then the not-equal pred.
 (defn render-not-char [ir sv]
-  (let [ch (extract (get (.data ir) 0))
+  (let [ch (.ch ir)
         SV (skip-expr sv)
         C (str "(subs " SV " 0 1)")
         msg (render-literal (str "expected a character other than " ch))]
@@ -348,7 +342,7 @@
 ;; (str-prefix? S input) + N take-chars (N = the literal's length, 1
 ;; for one char); let-free.
 (defn render-string [ir sv]
-  (let [lit (extract (get (.data ir) 0))
+  (let [lit (.lit ir)
         SV (skip-expr sv)
         L (render-literal lit)
         msg (render-literal (str "expected " lit))]
@@ -359,7 +353,7 @@
 ;; render-ref [ir sv]: a call to the named rule over the threaded
 ;; state (ctor table) - self or mutual, uniformly.
 (defn render-ref [ir sv]
-  (vector (str "(" (extract (get (.data ir) 0)) " " sv ")")))
+  (vector (str "(" (.ref-name ir) " " sv ")")))
 
 ;; always-value-dispatch: the AlwaysSucceed constant's source form -
 ;; a String literal or the empty vector (the deftype-ctor empty field
@@ -379,12 +373,12 @@
 
 ;; render-always [ir sv]: (state/ParserMatch <v> sv) (ctor table).
 (defn render-always [ir sv]
-  (let [v (extract (get (.data ir) 0))]
+  (let [v (.as-value ir)]
     (vector (always-value-dispatch (type-name v) v sv))))
 
 ;; render-error [ir sv]: (state/ParserError MSG sv) (ctor table).
 (defn render-error [ir sv]
-  (vector (str "(state/ParserError " (render-literal (extract (get (.data ir) 0))) " " sv ")")))
+  (vector (str "(state/ParserError " (render-literal (.error-msg ir)) " " sv ")")))
 
 ;; =====================================================================
 ;; Phase 2 - render (item 4b.2): the wrapper ctors.
@@ -420,7 +414,6 @@
 ;; (the NodeIR2 wrapper's cl? is Some).
 (defn char-level [ir]
   (str= (type-name (.cl? ir)) "Some"))
-
 
 ;; ir-value-shape [ir]: "string" iff the position's value is a single
 ;; String; "vector" iff it is a Vector of strings. Structural (the IR),
@@ -604,7 +597,7 @@
 ;; child, discard the value (the fn binds _), thread the state; the
 ;; standalone value is the unit (empty-vector).
 (defn render-ignore [ir sv]
-  (let [res (render-child (extract (get (.data ir) 0)) sv)]
+  (let [res (render-child (.ignore-child ir) sv)]
     (comp (butlast res)
           (vector (str "(parse-then " (extract (last res)) " (fn [_ s2] (state/ParserMatch empty-vector s2))))")))))
 
@@ -612,7 +605,7 @@
 ;; children in sequence (nested parse-then), flatten-join their string
 ;; values into ONE string.
 (defn render-concat [ir sv]
-  (let [cs (.data ir)
+  (let [cs (.concat-parsers ir)
         vnames (gen-vnames (count cs))]
     (concat-tail cs 0 sv vnames (build-join cs vnames))))
 
@@ -621,42 +614,42 @@
 ;; auto-loc is the line where the form started (the entry state sv,
 ;; whitespace-skipped).
 (defn render-node [ir sv]
-  (let [child (extract (get (.data ir) 1))
+  (let [child (.node-child ir)
         res (render-child child sv)]
     (comp (butlast res)
-          (vector (str "(parse-then " (extract (last res)) " (fn [v s2] (state/ParserMatch (raw/" (extract (get (.data ir) 0)) " " (join-strings " " (comp (node-value-args child "v") (vector (str "(state/state-line (state/skip-whitespace " sv "))")))) ") s2))))")))))
+          (vector (str "(parse-then " (extract (last res)) " (fn [v s2] (state/ParserMatch (raw/" (.node-name ir) " " (join-strings " " (comp (node-value-args child "v") (vector (str "(state/state-line (state/skip-whitespace " sv "))")))) ") s2))))")))))
 
 ;; render-child [ir sv]: the render dispatch - the source lines for ir
 ;; over the state variable sv. The leaf ctors (4b.1) and the wrapper
 ;; ctors (4b.2); the remaining ctors (Any / All / Many / Rule) are the
 ;; later items (4b.3-4b.7).
 (defn render-child [ir sv]
-  (let [k (.kind ir)]
+  (let [k (type-name (.node ir))]
     (cond (str= k "CharRange")
-      (render-char-range ir sv)
+      (render-char-range (.node ir) sv)
 
       (str= k "NotChar")
-      (render-not-char ir sv)
+      (render-not-char (.node ir) sv)
 
-      (str= k "String")
-      (render-string ir sv)
+      (str= k "Str")
+      (render-string (.node ir) sv)
 
       (str= k "Ref")
-      (render-ref ir sv)
+      (render-ref (.node ir) sv)
 
       (str= k "AlwaysSucceed")
-      (render-always ir sv)
+      (render-always (.node ir) sv)
 
       (str= k "Error")
-      (render-error ir sv)
+      (render-error (.node ir) sv)
 
       (str= k "Ignore")
-      (render-ignore ir sv)
+      (render-ignore (.node ir) sv)
 
       (str= k "Concat")
-      (render-concat ir sv)
+      (render-concat (.node ir) sv)
 
       (str= k "Node")
-      (render-node ir sv)
+      (render-node (.node ir) sv)
 
       (abort (str "render-child: not yet implemented: " k)))))
