@@ -1146,6 +1146,14 @@ rules; each form's rule arrives with its phase.
   every referenced top-level symbol has a defn (sub-module
   extraction probes hit this twice: the copied loop still named the
   full module's entry rule).
+- **Ctor names are global within a module namespace, not per-deftype
+  (2026-09-26, parser-gen item 2)**: two FIELDed ctors with the same
+  name in different deftypes is a hard load error (`*** A type named
+  'X' was already defined. Re-defined at <file>: N`). A BARE singleton
+  ctor name in a later multi-ctor list references the existing
+  fielded ctor of that name (order-dependent) — that is how
+  `intrp-ast.toc` coexists with `Expression/Inline [type-expr c-code
+  loc]` and a bare `TopLevel` `Inline`.
 
 ## Settled (continued)
 
