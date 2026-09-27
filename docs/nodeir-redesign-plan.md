@@ -443,3 +443,52 @@ CharRange (s10) and their delegating Rules (r1, r2), `None` for all
 the rest — including the 3-char Str, the non-char-level Any (r5), and
 Node / Concat / All / Ignore / Ref / AlwaysSucceed / Error. No other
 deviation from the plan.
+
+### Task 5a (value-shape helpers migrated) — 2026-09-27
+
+Rewrote `ir-value-shape` and `ir-value-arity` in
+`interpreter/intrp-emit.toc` to read `NodeIR2`'s named fields: both
+bind `n (.node ir)` once and dispatch on `(type-name n)`; the
+string-literal key is `"Str"` (was `"String"`); the `.data` reads are
+the unique getters — shape: `.any-alts` (Any, `extract (get … 0)`),
+`.rule-child` (Rule), `.many-child` (Many, via the `char-level`
+helper), `.as-value` (AlwaysSucceed); arity: `.all-parsers` (All,
+reducing over the non-Ignore children, detected by
+`(str= (type-name (.node c)) "Ignore")`), `.any-alts` (Any),
+`.rule-child` (Rule). The `ir-value-shape` header comment's leaf list
+updated (`String` → `Str`). Both defns via `toc_edit replace`
+(new-toc-validated); each splice left one extra blank line (unowned
+inter-node whitespace — the known limitation), fixed with byte-exact
+Python whitespace-only edits. `check` exit 0.
+
+DEVIATION from the plan's wording (one structural point, forced by the
+actual types): the task text (and the Task 4b note quoting it) shows
+the getters applied to the wrapper — `(.any-alts ir)`. That is a
+RUNTIME dispatch failure: the 16 named fields live on the `IRNode`
+ctors, not on the `NodeIR2` wrapper, so `(.any-alts ir)` on a `NodeIR2`
+aborts with `No implementation of '.any-alts' found for type NodeIR2`
+(verified with a minimal probe before the fix). The getters are
+applied to `(.node ir)` — bound once as `n` at the top of each fn.
+Same correction applies to Task 5b's render fns: the unique getters
+(`.lo`, `.hi`, …) take `(.node ir)`, not `ir`.
+
+Verified: `check` exit 0; library loads clean (`*** Loaded
+interpreter/intrp-emit.toc`, exit 134, captured stderr 21 lines,
+non-empty). Temp probe `interpreter/ir5a-probe.toc` (deleted after):
+`add-ns`ed `emit`, constructed 12 `NodeIR2` shapes directly
+(CharRange, NotChar, 3-char Str, Concat, All of 3 incl. an Ignore,
+Any, Rule-over-All, Any-over-Rule-over-All, Many-over-CharRange,
+Many-over-Any, AlwaysSucceed-String, AlwaysSucceed-Vector) and printed
+`ir-value-shape` for all 12 plus `ir-value-arity` for the three
+vector-shaped ones. First two builds were transient segfaults (clean
+load, no error message); the third was clean — the standard policy.
+Ran clean: exit 0, malloc diff 0, remaining nodes 0. All 15 lines
+hand-verified against the pre-migration behaviour: `string` for
+CharRange / NotChar / Str / Concat / Any-over-Str / Many-over-
+CharRange (char-level fast path) / AlwaysSucceed-String; `vector` for
+All / Rule-over-All / Any-over-Rule / Many-over-Any (slow) /
+AlwaysSucceed-Vector; arities 2 (All with one Ignore excluded), 2
+(Rule→All), 1 (Any→Rule→All with one Ignore excluded). Note:
+`type-name` prints a `typeName: <name>` debug line per call under
+`-DSTATS=1` — expected noise in probe output, not a result. No other
+deviation from the plan.
