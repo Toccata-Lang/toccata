@@ -257,12 +257,17 @@ else — the dependency on the disowned hand-written reader is severed.
 
 Two phases over the grammar data:
 
-**Phase 1 — analyze.** `analyze [pc]` = `(fold pc h)` — the core
-`fold`, no new walker. `h` is one function dispatching on
-`type-name`; to respect the proven let-wrapping-cond miscompile
-shape, the dispatch is the parameter split: `(defn h [v]
-(h-dispatch (type-name v) v))` with a flat-cond `h-dispatch [k v]`.
-After `recurse` reassembles a node, container ctors' fields hold
+**Phase 1 — analyze.** `analyze [pc]` = `(fold pc analyze-node)` —
+the core `fold`, no new walker. The handler is a PROTOCOL —
+`defp analyze-node` + one `extend-type` impl per ctor type (the v1
+EBNF emitter's pattern, `intrp-ebnf.toc`), NOT a defn dispatching
+on `type-name`: a defn handler (even the parameter-split shape
+`h` / `h-dispatch`) deterministically miscompiles as soon as the
+fold reaches a map-recurse ctor (Any / All / Concat) — "Compiler
+screwed up. Incomplete result" (Tag SUB), 5/5, even with a plain
+no-cond handler (Inherited verified facts, 2026-09-27 item 4a;
+deviation recorded in the item-4a as-built note). After `recurse`
+reassembles a node, container ctors' fields hold
 children's IR values; leaves hold raw fields. `Ref` and `String`
 are leaves, so the fold terminates structurally even though the
 generated reader is recursive. The IR is `NodeIR [node
