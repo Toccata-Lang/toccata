@@ -1,7 +1,7 @@
 # NodeIR redesign: positional `data` vector → multi-ctor deftype
 
 Status: phase 1 (tasks 1-7) done 2026-09-27; phase 2:
-tasks 8-9 done 2026-09-27, tasks 10-11 pending
+tasks 8-10 done 2026-09-27, task 11 pending
 Date: 2026-07-09 (phase 2 added 2026-09-27)
 
 ## Goal
@@ -894,3 +894,42 @@ file-creation artifact, since `pr*` adds no newline; the strip
 re-appends it for the compare. The rendered content itself is
 newline-free and matches byte-for-byte.) No other deviation from the
 plan.
+
+### Task 10 (NodeIR deftype deleted) — 2026-09-27
+
+Deleted `(deftype NodeIR [node char-level?])` (was top-level path 5) +
+its 8-line header comment (path 4), and rewrote the `IRNode` comment
+(path 2) from "the multi-ctor replacement for the old NodeIR's
+positional data vector" to the full-history statement (positional
+`data` vector → wrapper + `IRNode` → bare `IRNode` with the
+`char-level` protocol). All three edits via `toc_edit` (replace for the
+IRNode comment, delete x2 for the deftype + its comment), each
+new-toc-validated (exit 0); the two deletes left a 3-blank-line gap
+before the `char-level` protocol comment (unowned inter-node
+whitespace — the known limitation), collapsed to one blank with a
+byte-exact whitespace-only edit.
+
+The deftype was confirmed unreferenced before the edit: no `(NodeIR …)`
+constructor call, no `.node` / `.char-level?` reads (the only `.node`
+grep hits are the `.node-child` / `.node-name` field getters in
+`render-node`), so the deletion is pure.
+
+DEVIATION from the task's grep done-criterion (one point, forced by the
+task split): the criterion is "no `NodeIR` reference remains outside
+historical comments". After this task the deftype, its comment, and the
+IRNode comment are all clean, but the **main header comment (node 0,
+lines 8/12)** still describes the IR as "NodeIR [node char-level?]" —
+that is the primary shape description, not a migration-history comment,
+and is Task 11's explicit named scope ("The header comment of
+`interpreter/intrp-emit.toc`"). Left for Task 11 to keep the one-task
+boundary; the file is load-clean and no committed consumer is affected
+by the stale header. Line 61's "NodeIR redesign" is a project-name
+reference (historical), not a current-type description. No other
+deviation from the plan.
+
+Verified: `check` exit 0; library loads clean (`*** Loaded
+interpreter/intrp-emit.toc`, exit 134, captured stderr 21 lines,
+non-empty); grep confirms no `(NodeIR …)` constructor, no `.node` /
+`.char-level?` read, and the only `NodeIR` mentions are the now-
+historical IRNode comment (lines 37/38), the project-name reference
+(line 61), and the main header (node 0 — Task 11).
