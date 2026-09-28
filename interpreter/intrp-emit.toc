@@ -65,105 +65,132 @@
 ;;                 leaf - no force-time global resolution)
 (deftype NodeIR [node char-level?])
 
-;; all-ir-char-level? [irs]: Some None iff every IR in irs is
-;; char-level (a reduce over the flags - the v1 pre-pass, bottom-up
-;; on the IR instead of the combinator).
-(defn all-ir-char-level? [irs]
-  (reduce irs (Some None)
-          (fn [acc ir]
-            (and acc (.char-level? ir)))))
+;; char-level [n]: Some None iff the IRNode n classifies a single
+;; char (the char-level protocol over the IRNode ctors - phase 2 of the
+;; NodeIR redesign, docs/nodeir-redesign-plan.md). CharRange / NotChar
+;; are always char-level; Str iff its literal is one char; Any iff every
+;; alt is char-level (a reduce); Rule / Many delegate to their child;
+;; All / Ref / Node / Concat / Ignore / AlwaysSucceed / Error are never.
+(defp char-level [n])
 
+
+(extend-type CharRange
+  (char-level [n]
+    (Some None)))
+
+(extend-type NotChar
+  (char-level [n]
+    (Some None)))
+
+(extend-type Str
+  (char-level [n]
+    (cond (= (count (.lit n)) 1)
+      (Some None)
+
+      None)))
+
+(extend-type Any
+  (char-level [n]
+    (reduce (.any-alts n) (Some None)
+            (fn [acc a]
+              (and acc (char-level a))))))
+
+(extend-type All
+  (char-level [n]
+    None))
+
+(extend-type Many
+  (char-level [n]
+    (char-level (.many-child n))))
+
+(extend-type Rule
+  (char-level [n]
+    (char-level (.rule-child n))))
+
+(extend-type Ref
+  (char-level [n]
+    None))
+
+(extend-type Node
+  (char-level [n]
+    None))
+
+(extend-type Concat
+  (char-level [n]
+    None))
+
+(extend-type Ignore
+  (char-level [n]
+    None))
+
+(extend-type AlwaysSucceed
+  (char-level [n]
+    None))
+
+(extend-type Error
+  (char-level [n]
+    None))
 
 ;; ir-char-range / ir-not-char: the leaf ctors - recurse leaves them
 ;; raw, so the fields are the grammar's raw values.
 (defn ir-char-range [v]
-  (NodeIR (CharRange (.lower v) (.upper v))
-          (Some None)))
+  (CharRange (.lower v) (.upper v)))
 
 
 (defn ir-not-char [v]
-  (NodeIR (NotChar (.char v))
-          (Some None)))
+  (NotChar (.char v)))
 
 
-;; One-char String: char-level (the Ctor table's bare-String pred);
-;; a longer literal is not char-level (no grammar node is one).
+;; ir-string: the bare-String literal (the Str ctor).
 (defn ir-string [v]
-  (cond (= (count v) 1)
-    (NodeIR (Str v)
-            (Some None))
-
-    (NodeIR (Str v)
-            None)))
+  (Str v))
 
 
-;; ir-any-dispatch / ir-any: the parameter split (per the plan's
-;; Settled design) - the alts vector is computed once and passed as
-;; a parameter, so the dispatch cond is flat over a named value.
-(defn ir-any-dispatch [cs]
-  (cond (all-ir-char-level? cs)
-    (NodeIR (Any cs)
-            (Some None))
-
-    (NodeIR (Any cs)
-            None)))
-
+;; ir-any: the Any ctor over the alts (the char-level classification
+;; is the protocol's, not the builder's).
 
 (defn ir-any [v]
-  (ir-any-dispatch (.parsers v)))
+  (Any (.parsers v)))
 
 ;; The container ctors - recurse reassembled them, so the fields
-;; hold the children's NodeIRs (the impl knows its ctor). Rule /
-;; Many delegate the flag to their child (ctor table); All / Ignore /
-;; Node / Concat are never char-level.
+;; hold the children's bare IRNodes (the impl knows its ctor).
 (defn ir-all [v]
-  (NodeIR (All (.parsers v))
-          None))
+  (All (.parsers v)))
 
 
 (defn ir-many [v]
-  (let [c (.parser v)]
-    (NodeIR (Many c)
-            (.char-level? c))))
+  (Many (.parser v)))
 
 
 (defn ir-rule [v]
-  (let [c (.parser v)]
-    (NodeIR (Rule (.name v) c)
-            (.char-level? c))))
+  (Rule (.name v) (.parser v)))
 
 
 ;; Ref: a leaf (the fold stops here - the named rule's IR is the
 ;; driver's to supply at render time; no force-time global
 ;; resolution). Never char-level for the same reason.
 (defn ir-ref [v]
-  (NodeIR (Ref (.name v))
-          None))
+  (Ref (.name v)))
 
 
 (defn ir-node [v]
-  (NodeIR (Node (.name v) (.parser v))
-          None))
+  (Node (.name v) (.parser v)))
 
 
 (defn ir-concat [v]
-  (NodeIR (Concat (.parsers v))
-          None))
+  (Concat (.parsers v)))
 
 
 (defn ir-ignore [v]
-  (NodeIR (Ignore (.parser v))
-          None))
+  (Ignore (.parser v)))
 
 
 (defn ir-always-succeed [v]
-  (NodeIR (AlwaysSucceed (.value v))
-          None))
+  (AlwaysSucceed (.value v)))
 
 
 (defn ir-error [v]
-  (NodeIR (Error (.msg v))
-          None))
+  (Error (.msg v)))
 
 
 ;; analyze-node: the fold's handler as a PROTOCOL (one extend-type
@@ -175,7 +202,7 @@
 ;; shape that runs clean (verified 2026-09-27, item 4a).
 (defp analyze-node [v]
   ! v grammar/ParserCombinator
-  ! -> NodeIR
+  ! -> IRNode
 )
 
 
@@ -232,7 +259,7 @@
     (ir-error v)))
 
 ;; analyze [pc]: the phase-1 catamorphism - the core fold over the
-;; combinator's recurse impls (hvm-core.toc:587). -> NodeIR
+;; combinator's recurse impls (hvm-core.toc:587). -> IRNode
 (defn analyze [pc]
   (fold pc analyze-node))
 
@@ -411,12 +438,6 @@
 
 ;; --- value-shape helpers (for Concat's join and Node's spread) -------
 
-;; char-level [ir]: true iff the IR node classifies a single char
-;; (the NodeIR wrapper's char-level? is Some).
-(defn char-level [ir]
-  (str= (type-name (.char-level? ir)) "Some"))
-
-
 ;; ir-value-shape [ir]: "string" iff the position's value is a single
 ;; String; "vector" iff it is a Vector of strings. Structural (the IR),
 ;; per the value-shape discipline (every alt of an Any feeding a shared
@@ -433,45 +454,45 @@
 ;;     supplied at module assembly 4c.2; the rest are not value sources
 ;;     in scope (a))
 (defn ir-value-shape [ir]
-  (let [n (.node ir)]
-    (cond (str= (type-name n) "CharRange")
+  (cond (str= (type-name ir) "CharRange")
+    "string"
+
+    (str= (type-name ir) "NotChar")
+    "string"
+
+    (str= (type-name ir) "Str")
+    "string"
+
+    (str= (type-name ir) "Concat")
+    "string"
+
+    (str= (type-name ir) "All")
+    "vector"
+
+    (str= (type-name ir) "Any")
+    (ir-value-shape (extract (get (.any-alts ir) 0)))
+
+    (str= (type-name ir) "Rule")
+    (ir-value-shape (.rule-child ir))
+
+    (str= (type-name ir) "Many")
+    (cond (char-level (.many-child ir))
       "string"
 
-      (str= (type-name n) "NotChar")
-      "string"
+      "vector")
 
-      (str= (type-name n) "Str")
-      "string"
-
-      (str= (type-name n) "Concat")
-      "string"
-
-      (str= (type-name n) "All")
-      "vector"
-
-      (str= (type-name n) "Any")
-      (ir-value-shape (extract (get (.any-alts n) 0)))
-
-      (str= (type-name n) "Rule")
-      (ir-value-shape (.rule-child n))
-
-      (str= (type-name n) "Many")
-      (cond (char-level (.many-child n))
+    (str= (type-name ir) "AlwaysSucceed")
+    (let [v (.as-value ir)]
+      (cond (str= (type-name v) "String")
         "string"
 
-        "vector")
+        (str= (type-name v) "Vector")
+        "vector"
 
-      (str= (type-name n) "AlwaysSucceed")
-      (let [v (.as-value n)]
-        (cond (str= (type-name v) "String")
-          "string"
+        (abort (str "ir-value-shape: unsupported AlwaysSucceed value: " (type-name v)))))
 
-          (str= (type-name v) "Vector")
-          "vector"
+    (abort (str "ir-value-shape: unsupported kind: " (type-name ir)))))
 
-          (abort (str "ir-value-shape: unsupported AlwaysSucceed value: " (type-name v)))))
-
-      (abort (str "ir-value-shape: unsupported kind: " (type-name n))))))
 
 ;; ir-value-arity [ir]: the static arity of a "vector"-shaped value (the
 ;; number of ctor args a Node spreads it into). Only meaningful when
@@ -481,23 +502,23 @@
 ;;   - Many (slow) -> abort (dynamic arity - not spreadable; not in
 ;;     scope (a))
 (defn ir-value-arity [ir]
-  (let [n (.node ir)]
-    (cond (str= (type-name n) "All")
-      (let [cs (.all-parsers n)]
-        (reduce cs 0
-                (fn [acc c]
-                  (cond (str= (type-name (.node c)) "Ignore")
-                    acc
+  (cond (str= (type-name ir) "All")
+    (let [cs (.all-parsers ir)]
+      (reduce cs 0
+              (fn [acc c]
+                (cond (str= (type-name c) "Ignore")
+                  acc
 
-                    (+ acc 1)))))
+                  (+ acc 1)))))
 
-      (str= (type-name n) "Any")
-      (ir-value-arity (extract (get (.any-alts n) 0)))
+    (str= (type-name ir) "Any")
+    (ir-value-arity (extract (get (.any-alts ir) 0)))
 
-      (str= (type-name n) "Rule")
-      (ir-value-arity (.rule-child n))
+    (str= (type-name ir) "Rule")
+    (ir-value-arity (.rule-child ir))
 
-      (abort (str "ir-value-arity: unsupported kind: " (type-name n))))))
+    (abort (str "ir-value-arity: unsupported kind: " (type-name ir)))))
+
 
 ;; vec-arg-exprs [v n]: n arg expressions extracting elements 0..n-1
 ;; of the value vector bound to variable v: (extract (get v i)).
@@ -626,32 +647,32 @@
 ;; ctors (4b.2); the remaining ctors (Any / All / Many / Rule) are the
 ;; later items (4b.3-4b.7).
 (defn render-child [ir sv]
-  (let [k (type-name (.node ir))]
+  (let [k (type-name ir)]
     (cond (str= k "CharRange")
-      (render-char-range (.node ir) sv)
+      (render-char-range ir sv)
 
       (str= k "NotChar")
-      (render-not-char (.node ir) sv)
+      (render-not-char ir sv)
 
       (str= k "Str")
-      (render-string (.node ir) sv)
+      (render-string ir sv)
 
       (str= k "Ref")
-      (render-ref (.node ir) sv)
+      (render-ref ir sv)
 
       (str= k "AlwaysSucceed")
-      (render-always (.node ir) sv)
+      (render-always ir sv)
 
       (str= k "Error")
-      (render-error (.node ir) sv)
+      (render-error ir sv)
 
       (str= k "Ignore")
-      (render-ignore (.node ir) sv)
+      (render-ignore ir sv)
 
       (str= k "Concat")
-      (render-concat (.node ir) sv)
+      (render-concat ir sv)
 
       (str= k "Node")
-      (render-node (.node ir) sv)
+      (render-node ir sv)
 
       (abort (str "render-child: not yet implemented: " k)))))

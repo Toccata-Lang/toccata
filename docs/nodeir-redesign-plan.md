@@ -1,7 +1,8 @@
 # NodeIR redesign: positional `data` vector → multi-ctor deftype
 
-Status: planned
-Date: 2026-07-09
+Status: phase 1 (tasks 1-7) done 2026-09-27; phase 2:
+tasks 8-9 done 2026-09-27, tasks 10-11 pending
+Date: 2026-07-09 (phase 2 added 2026-09-27)
 
 ## Goal
 
@@ -246,6 +247,139 @@ Update the Settled section of `docs/parser-generator-plan.md` (the
 `interpreter/intrp-emit.toc` (the `NodeIR` shape note), and this plan's
 as-built notes. **Done when:** the docs reflect the new shape; no stale
 reference to the positional `data` vector remains.
+
+## Phase 2 — complete elimination of the `NodeIR` wrapper
+
+Added 2026-09-27, after phase 1 completed.
+
+### Motivation
+
+Phase 1 kept `NodeIR [node char-level?]` as a wrapper to carry the
+char-level classification as a stored field. The classification is
+fully derivable from the `IRNode` value: it is a per-ctor constant
+for 10 of the 13 ctors, and for the rest a function of the
+fields/children (`Str` — `lit` is one char; `Any` — every alt is
+char-level; `Rule` / `Many` — the child is char-level). Making it a
+protocol over `IRNode` removes the wrapper's only field, and with it
+the wrapper itself: `analyze` returns a bare `IRNode`, and every
+consumer drops a level of indirection.
+
+Accepted trade-off: the stored flag was computed once, bottom-up,
+during the fold; the protocol re-derives it on every consultation
+(the `Any` impl re-traverses the alts). The IR is grammar-sized and
+the classification is consulted a handful of times in the render
+(`ir-value-shape`'s `Many` case; the `Many` fast/slow split, item
+4b.5) — negligible.
+
+The render output must be **byte-identical** before and after (the
+phase-1 baselines are the net).
+
+### Settled design (phase 2)
+
+- `char-level` becomes a **protocol** over `IRNode`, returning a
+  boolean exactly like the current `char-level` defn: `(defp
+  char-level [n])` + one `extend-type` impl per ctor:
+  - `CharRange` / `NotChar` → `true`
+  - `Str` → `true` iff `(count .lit)` is 1
+  - `Any` → `true` iff every alt in `.any-alts` is char-level (a
+    reduce calling `char-level`)
+  - `Rule` / `Many` → `(char-level <child>)`
+  - `All` / `Ignore` / `Node` / `Concat` / `Ref` /
+    `AlwaysSucceed` / `Error` → `false`
+  The impls are recursive through the defp (declared before the
+  impls — single-pass safe); the recursion is plain calls over
+  already-built IR values, no fold, so the defn-handler miscompile
+  hazard does not apply. This is the first `extend-type` over the
+  `IRNode` ctors — task 8's probe forces the codegen and verifies it.
+- The `ir-*` builders return bare `IRNode`s (the wrapper
+  construction goes away); `ir-string`'s count branch and
+  `ir-any-dispatch`'s flag logic move into the protocol impls
+  (`ir-any` becomes a plain `(Any (.parsers v))`).
+- `analyze-node`'s annotation → `! -> IRNode`; the `IRNode` child
+  fields hold bare `IRNode`s.
+- `ir-value-shape` / `ir-value-arity` / `render-child` take bare
+  `IRNode`s: the `n (.node ir)` binds and `(.node ir)` unwraps are
+  dropped; dispatch on `(type-name ir)`. The 9 per-ctor render fns
+  are unchanged (they already take the `IRNode`).
+- Deleted: `(deftype NodeIR [node char-level?])`, the `char-level`
+  defn (replaced by the protocol), `all-ir-char-level?` (replaced by
+  the `Any` impl's reduce).
+- Transition name: while the old defn `char-level` exists, the new
+  protocol is `ir-char-level?` (same-namespace collision); the
+  rename happens in the task that deletes the defn.
+
+### Tasks (phase 2)
+
+Tasks continue the phase-1 numbering. Each ends with the library
+loading clean; structural edits go through `toc_edit.py`; probes sit
+in `interpreter/` (same module path) and are deleted after.
+
+#### Task 8 — Add the char-level protocol (coexisting, unused)
+
+Add `defp ir-char-level?` + the 13 impls after `all-ir-char-level?`
+(single-pass: before the first use in task 9). During the transition
+the children are still wrapped, so the `Rule` / `Many` impls unwrap
+their child (`(ir-char-level? (.node <child>))`) and the `Any` impl
+reuses `all-ir-char-level?` (it reads the wrapped children's stored
+flags — correct while the builders still wrap). Nothing on the main
+path references the protocol yet.
+
+**Done when:** `check` exits 0; the library loads clean; a temp
+probe (the task-4b 5-rule grammar + 13 standalone shapes, with the
+recursive printer) verifies `(ir-char-level? (.node ir))` equals
+`(char-level ir)` on every node of the folded IR. Delete the probe.
+
+#### Task 9 — Migrate to bare `IRNode`; rename the protocol
+
+- The 13 `ir-*` builders return bare `IRNode`s (no wrapper;
+  `ir-string` → `(Str v)`, count branch gone; `ir-any-dispatch`
+  gone, `ir-any` → `(Any (.parsers v))`).
+- `analyze-node`'s annotation → `! -> IRNode`.
+- The protocol impls drop the `.node` unwraps; the `Any` impl gets
+  its own reduce over `.any-alts` calling `ir-char-level?`; delete
+  `all-ir-char-level?`.
+- `ir-value-shape` / `ir-value-arity`: take the bare `IRNode`, drop
+  the `n (.node ir)` binds, dispatch on `(type-name ir)`; the
+  `Many` case calls `ir-char-level?`; the `All` arity case tests
+  `(type-name c)` (no `.node`).
+- `render-child`: dispatch on `(type-name ir)`, pass `ir` to the
+  per-ctor fns.
+- Delete the `char-level` defn (point its one call site —
+  `ir-value-shape`'s `Many` case — at `ir-char-level?` first), then
+  rename the protocol `ir-char-level?` → `char-level` (defp + impls
+  + call sites).
+- The `NodeIR` deftype still exists but is unreferenced; it goes in
+  task 10.
+
+**Done when:** `check` exits 0; the library loads clean; the 4b.1
+(9 shapes) + 4b.2 (3 shapes) probes, recreated to construct bare
+`IRNode`s directly, render **byte-identical** to
+`scratch/nodeir-baseline-4b1.txt` / `-4b2.txt` (task-5b method:
+`pr*` the whole expected output as one unit, strip the runtime-stats
+tail and the `typeName:` noise, `cmp`). Delete the probes.
+
+#### Task 10 — Delete the `NodeIR` deftype
+
+Delete `(deftype NodeIR [node char-level?])` + its header comment;
+update the migration-history comments that describe the wrapper as
+current (the IRNode comment's "multi-ctor replacement for the old
+NodeIR's positional data vector" line becomes the full-history
+statement: positional `data` vector → wrapper + `IRNode` → bare
+`IRNode` with the `char-level` protocol).
+
+**Done when:** `check` exits 0; the library loads clean; a grep
+confirms no `NodeIR` reference remains outside historical comments.
+
+#### Task 11 — Update the docs
+
+- `docs/parser-generator-plan.md`, Settled section, the phase-1
+  paragraph: the IR is the bare `IRNode`; the char-level
+  classification is a protocol over `IRNode` (the classification
+  rule itself is unchanged).
+- The header comment of `interpreter/intrp-emit.toc`.
+
+**Done when:** no stale reference to the `NodeIR` wrapper as a
+current type remains in either doc.
 
 ## As-built notes
 
@@ -629,3 +763,134 @@ or the intrp-emit.toc header — the only "positional data vector"
 mention left in the .toc file is the IRNode comment's
 migration-history line). No deviation from the plan. This completes
 Tasks 1–7.
+
+### Task 8 (char-level protocol added, coexisting, unused) - 2026-09-27
+
+The working tree already contained the protocol (uncommitted, from an
+interrupted task-8 start): `defp ir-char-level?` + impls after
+`all-ir-char-level?`, exactly per the settled design (CharRange /
+NotChar -> `(Some None)`; Str -> `(Some None)` iff `(count (.lit n))`
+is 1; Any -> `(all-ir-char-level? (.any-alts n))` - reuses the stored
+flags of the still-wrapped children; Many / Rule ->
+`(ir-char-level? (.node <child>))`; All / Ref / Node / Concat /
+Ignore / AlwaysSucceed / Error -> `None`). One fix: the tree carried
+an extra 14th impl for the `NodeIR` wrapper itself - deleted it
+(`toc_edit delete`, new-toc-validated; the splice's blank-line residue
+collapsed with a byte-exact whitespace-only edit - unowned inter-node
+whitespace, the known limitation). The settled design is one impl per
+`IRNode` ctor (13); the wrapper impl is not in it and would have had
+to be deleted in task 10 with the deftype.
+
+Verified: `check` exit 0; library loads clean (`*** Loaded
+interpreter/intrp-emit.toc`, exit 134, captured stderr 21 lines,
+non-empty). Temp probe `interpreter/ir8-probe.toc` (deleted after):
+`add-ns`ed `emit` + `grammar`, ran `emit/analyze` over the task-4b
+5-rule grammar (all 13 ctors) plus the 13 standalone ctor shapes, and
+a recursive checker walked each folded IR as a PURE computation -
+`check-node` returns `(vector total bad)`: total counts every node
+visited, bad counts the nodes whose stored `.char-level?` flag
+disagrees with `(emit/ir-char-level? (.node ir))` - and `walk` prints
+ONE summary line per shape. All 18 lines hand-verified: the totals
+match the hand count exactly (r1=2, r2=4, r3=6, r4=5, r5=4, s1..s7=1
+each, s8=3, s9=4, s10=2, s11=2, s12=3, s13=2 - 44 nodes overall) and
+`bad=0` on every line - the protocol equals the stored flag on every
+node of the folded IR. Ran clean: exit 0, malloc diff 0, remaining
+nodes 0. Build recipe as in the Task 4a note (new-toc to stdout,
+awk `#line`, clang; first attempt clean).
+
+New fact: the first probe version printed one `pr*` line per node from
+the recursive walker, and the stream SILENTLY DROPPED UNITS -
+deterministically (stable md5 across runs) the FIRST child's line in
+every multi-element vector walk was missing (8 of 44 lines), while the
+lines that did print all showed correct stored/proto values. The
+recorded multi-unit output-ordering hazard (Task 5b note) extends to
+DATA units, not just the `typeName:` noise: a per-node `pr*` stream is
+not a reliable verification channel; a pure computation (count/sum
+returned as the value, one summary `pr*` per shape) is. No other
+deviation from the plan.
+
+### Task 9 (migrated to bare IRNode; protocol renamed) — 2026-09-27
+
+Migrated the whole file to the bare `IRNode` and renamed the protocol.
+The 13 `ir-*` builders return bare `IRNode`s (no wrapper): `ir-string`
+→ `(Str v)` (the 1-char count branch gone), `ir-any-dispatch` deleted
+and `ir-any` → `(Any (.parsers v))`, `ir-many` → `(Many (.parser v))`,
+`ir-rule` → `(Rule (.name v) (.parser v))` (both drop the `let [c …]` /
+`.char-level? c` delegation — the flag is the protocol's now); the rest
+are flat `(Ctor <fields>)`. `analyze-node`'s annotation → `! -> IRNode`
+(and the `analyze` comment's `-> NodeIR` → `-> IRNode`). The protocol
+impls drop the `.node` unwraps (Many / Rule read `(.many-child n)` /
+`(.rule-child n)` directly); the `Any` impl gets its own reduce over
+`.any-alts` calling the protocol; `all-ir-char-level?` deleted (with its
+comment). `ir-value-shape` / `ir-value-arity` take the bare `IRNode`
+(the `let [n (.node ir)]` binds dropped, dispatch on `(type-name ir)`);
+the `Many` case calls the protocol; the `All` arity case tests
+`(type-name c)` (no `.node`). `render-child` dispatches on
+`(type-name ir)` and passes `ir` to the per-ctor fns (the 9 fns are
+unchanged — they already take the `IRNode`). The `char-level` defn is
+deleted (its one call site — `ir-value-shape`'s `Many` case — pointed at
+the protocol first), then the protocol is renamed `ir-char-level?` →
+`char-level`. The `NodeIR` deftype still exists but is now
+unreferenced; it goes in task 10.
+
+DEVIATION from the settled design (one point, forced by the language):
+the design says the protocol returns a **boolean** (`true` / `false`)
+"exactly like the current `char-level` defn". But `true` and `false`
+are NOT defined symbols in the new-toc build — a probe returning them
+is rejected with `*** Undefined symbol: 'true'` (verified before the
+edit). The codebase's boolean idiom is a comparison result (the old
+`char-level` defn returned `(str= … "Some")`), not a literal. So the
+protocol keeps the **Maybe** representation task 8 built (`(Some None)`
+iff char-level, else `None`) — which is also exactly what task 9's
+instructions describe (drop the `.node` unwraps; the `Any` reduce;
+delete `all-ir-char-level?`). Verified with a probe that `cond` treats
+`(Some None)` as truthy and `None` as falsy (and `and` likewise), so
+`ir-value-shape`'s `Many` case works unchanged. The task 8 as-built
+note's "exactly per the settled design" claim was about the shape, not
+the return type; the return type is the one place the settled-design
+text and the buildable language disagree.
+
+Method: all structural edits via `toc_edit` (replace / delete), each
+new-toc-validated. The protocol rename `ir-char-level?` → `char-level`
+(19 occurrences: defp + 13 impls + recursive calls + the `ir-value-
+shape` call site + the comment) was a **global byte-exact token
+replace** (a Python `str.replace`), done AFTER the old `char-level`
+defn was deleted so the name was free. A one-node-at-a-time rename is
+not `toc_edit`-doable: the defp and its `extend-type` impls must agree
+on the protocol name, so there is NO load-clean intermediate state
+(rename the defp first → impls reference an undefined protocol; rename
+the impls first → they `extend-type` the old `char-level` defn, a
+non-protocol). The rename is a pure symbol substitution (no span
+surgery), so the byte-exact replace is the right tool; `check` was run
+after.
+
+New facts: (1) `true` / `false` are not defined symbols (see the
+deviation). (2) A **comment node's span includes its trailing
+newline** — replacing a comment node with a snippet that has no trailing
+newline merges the comment onto the next line (`*** Error … Invalid
+expression`); the snippet must end in `\n`. (Defn-node spans do NOT
+include the following blank line, so defn snippets need no trailing
+newline.) (3) The protocol-rename hazard above (no valid intermediate
+state).
+
+Verified: `check` exit 0; library loads clean (`*** Loaded
+interpreter/intrp-emit.toc`, exit 134, captured stderr non-empty);
+grep confirms no `.node` reads remain (only the `.node-child` /
+`.node-name` field getters in `render-node`), no `.char-level?` reads
+outside the `NodeIR` deftype field + header comment, no
+`all-ir-char-level?` / `ir-any-dispatch` / `NodeIR2` / `cl?` / `.kind`
+/ `.data`. Recreated the 4b.1 (9 shapes) and 4b.2 (3 shapes) probes
+(in `interpreter/`, deleted after) to construct **bare `IRNode`s
+directly** (`emit/CharRange "a" "z"`, …) and render each via
+`emit/render-child ir "sv"`; each builds the whole expected baseline
+output as ONE string (shapes in reverse creation order; each shape's
+single `L0` line + `SHAPE <name>`) and `pr*`s it as a single unit
+(task-5b method). Both ran clean: exit 0, malloc diff 0, remaining
+nodes 0. With the `typeName:` noise and the runtime-stats tail (from
+`- Threads:`) stripped, the output is byte-identical to
+`scratch/nodeir-baseline-4b1.txt` and `-4b2.txt` — `cmp` clean on
+both. (The baseline files end with a single trailing `\n` — a
+file-creation artifact, since `pr*` adds no newline; the strip
+re-appends it for the compare. The rendered content itself is
+newline-free and matches byte-for-byte.) No other deviation from the
+plan.
