@@ -1,7 +1,6 @@
 # NodeIR redesign: positional `data` vector → multi-ctor deftype
 
-Status: phase 1 (tasks 1-7) done 2026-09-27; phase 2:
-tasks 8-10 done 2026-09-27, task 11 pending
+Status: all tasks (1-11) done 2026-09-27
 Date: 2026-07-09 (phase 2 added 2026-09-27)
 
 ## Goal
@@ -933,3 +932,43 @@ non-empty); grep confirms no `(NodeIR …)` constructor, no `.node` /
 `.char-level?` read, and the only `NodeIR` mentions are the now-
 historical IRNode comment (lines 37/38), the project-name reference
 (line 61), and the main header (node 0 — Task 11).
+
+### Task 11 (docs updated to the bare-IRNode shape) — 2026-09-27
+
+Updated the two docs the task names. (1) The Settled section of
+`docs/parser-generator-plan.md`, the Phase 1 (analyze) paragraph:
+the final sentence (Task 7's "The IR is `NodeIR [node
+char-level?]` …") now states the final shape — the IR is the bare
+`IRNode` multi-ctor deftype (13 ctors, `Str` for the core-`String`
+collision, named fields unique across every type in the build, direct
+`.field` getters), and the char-level classification is the
+`char-level` protocol over the `IRNode` ctors (the classification
+rule itself unchanged: `Some None` iff the node classifies a single
+char — CharRange / NotChar / one-char Str; Any iff all alts; Rule /
+Many iff child). Plain edit-tool text replacement (a `.md` file —
+not `toc_edit` scope). (2) The header comment of
+`interpreter/intrp-emit.toc` (node 0, a comment node — `toc_edit
+replace` with the full new comment text, new-toc-validated, accepted
+first attempt): the "The IR is NodeIR [node char-level?] …" sentence
+now says the combinator is analyzed into a bare `IRNode` and the
+char-level classification is the `char-level` protocol over the
+`IRNode` ctors, cross-referencing this plan. The header's historical
+DEVIATION paragraph (the `h` defn miscompile) is unchanged.
+
+Left as-is (not stale current-type references): the item-4a task
+item's "`NodeIR` (or equivalent)" wording (a completed task
+description, `[x]`) and the item-4a as-built note's
+"`NodeIR [kind char-level? data]`" (append-only history) in
+parser-generator-plan.md; the IRNode comment's full-history line and
+the `char-level` comment's "NodeIR redesign" project-name reference
+in the .toc. The plan's own status line updated to all-tasks-done.
+
+Verified: `check` exit 0; library loads clean (`*** Loaded
+interpreter/intrp-emit.toc`, exit 134, captured stderr 21 lines,
+non-empty); grep confirms no `NodeIR [node` reference remains in
+parser-generator-plan.md (the only `NodeIR [` left is the item-4a
+as-built note's historical "`NodeIR [kind char-level? data]`"), and
+the .toc header no longer mentions `NodeIR` (the remaining file
+mentions are the historical IRNode comment and the project-name
+reference). No other file touched. No deviation from the plan. This
+completes Tasks 1–11.
