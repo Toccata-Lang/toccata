@@ -431,7 +431,9 @@
 ;; ir-value-shape [ir]: "string" iff the position's value is a single
 ;; String; "vector" iff it is a Vector of strings. Structural (the IR),
 ;; per the value-shape discipline (every alt of an Any feeding a shared
-;; position yields the same shape).
+;; position yields the same shape). A protocol (defp + one extend-type
+;; impl per supported ctor - the char-level pattern); the defp's body is
+;; the abort for the unsupported kinds.
 ;;   - char-level leaves (CharRange / NotChar / Str) and Concat
 ;;     -> "string"
 ;;   - Many -> "string" iff char-level (fast path, one run string),
@@ -440,74 +442,88 @@
 ;;   - Any / Rule -> the first-alt / child's shape
 ;;   - AlwaysSucceed -> the constant's type (String -> "string",
 ;;     Vector -> "vector")
-;;   - Ref / Node / Ignore / Error -> abort (Ref needs the rule set,
-;;     supplied at module assembly 4c.2; the rest are not value sources
-;;     in scope (a))
-(defn ir-value-shape [ir]
-  (cond (str= (type-name ir) "CharRange")
-    "string"
+;;   - Ref / Node / Ignore / Error -> the default abort (Ref needs the
+;;     rule set, supplied at module assembly 4c.2; the rest are not
+;;     value sources in scope (a))
+(defp ir-value-shape [n]
+  (abort (str "ir-value-shape: unsupported kind: " (type-name n))))
 
-    (str= (type-name ir) "NotChar")
-    "string"
+(extend-type CharRange
+  (ir-value-shape [n]
+    "string"))
 
-    (str= (type-name ir) "Str")
-    "string"
+(extend-type NotChar
+  (ir-value-shape [n]
+    "string"))
 
-    (str= (type-name ir) "Concat")
-    "string"
+(extend-type Str
+  (ir-value-shape [n]
+    "string"))
 
-    (str= (type-name ir) "All")
-    "vector"
+(extend-type Concat
+  (ir-value-shape [n]
+    "string"))
 
-    (str= (type-name ir) "Any")
-    (ir-value-shape (extract (get (.any-alts ir) 0)))
+(extend-type All
+  (ir-value-shape [n]
+    "vector"))
 
-    (str= (type-name ir) "Rule")
-    (ir-value-shape (.rule-child ir))
+(extend-type Any
+  (ir-value-shape [n]
+    (ir-value-shape (extract (get (.any-alts n) 0)))))
 
-    (str= (type-name ir) "Many")
-    (cond (char-level (.many-child ir))
+(extend-type Rule
+  (ir-value-shape [n]
+    (ir-value-shape (.rule-child n))))
+
+(extend-type Many
+  (ir-value-shape [n]
+    (cond (char-level (.many-child n))
       "string"
 
-      "vector")
+      "vector")))
 
-    (str= (type-name ir) "AlwaysSucceed")
-    (let [v (.as-value ir)]
+(extend-type AlwaysSucceed
+  (ir-value-shape [n]
+    (let [v (.as-value n)]
       (cond (str= (type-name v) "String")
         "string"
 
         (str= (type-name v) "Vector")
         "vector"
 
-        (abort (str "ir-value-shape: unsupported AlwaysSucceed value: " (type-name v)))))
-
-    (abort (str "ir-value-shape: unsupported kind: " (type-name ir)))))
+        (abort (str "ir-value-shape: unsupported AlwaysSucceed value: " (type-name v)))))))
 
 
 ;; ir-value-arity [ir]: the static arity of a "vector"-shaped value (the
 ;; number of ctor args a Node spreads it into). Only meaningful when
-;; ir-value-shape is "vector".
+;; ir-value-shape is "vector". A protocol (defp + one extend-type impl
+;; per supported ctor - the ir-value-shape pattern); the defp's body is
+;; the abort for the unsupported kinds.
 ;;   - All -> the count of non-Ignore children
 ;;   - Any / Rule -> the first-alt / child's arity
-;;   - Many (slow) -> abort (dynamic arity - not spreadable; not in
-;;     scope (a))
-(defn ir-value-arity [ir]
-  (cond (str= (type-name ir) "All")
-    (let [cs (.all-parsers ir)]
+;;   - Many (slow) / the rest -> the default abort (dynamic arity - not
+;;     spreadable; not in scope (a))
+(defp ir-value-arity [n]
+  (abort (str "ir-value-arity: unsupported kind: " (type-name n))))
+
+(extend-type All
+  (ir-value-arity [n]
+    (let [cs (.all-parsers n)]
       (reduce cs 0
               (fn [acc c]
                 (cond (str= (type-name c) "Ignore")
                   acc
 
-                  (+ acc 1)))))
+                  (+ acc 1)))))))
 
-    (str= (type-name ir) "Any")
-    (ir-value-arity (extract (get (.any-alts ir) 0)))
+(extend-type Any
+  (ir-value-arity [n]
+    (ir-value-arity (extract (get (.any-alts n) 0)))))
 
-    (str= (type-name ir) "Rule")
-    (ir-value-arity (.rule-child ir))
-
-    (abort (str "ir-value-arity: unsupported kind: " (type-name ir)))))
+(extend-type Rule
+  (ir-value-arity [n]
+    (ir-value-arity (.rule-child n))))
 
 
 ;; vec-arg-exprs [v n]: n arg expressions extracting elements 0..n-1
