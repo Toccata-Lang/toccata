@@ -156,7 +156,7 @@
 
     (str "(state/take-char " (take-chars (- n 1) sv) ")")))
 
-;; --- leaf renders (let-free, inlined at use sites) --------------------
+;; --- leaf render helpers (used by the inlined leaf render-child impls) --
 
 ;; one-char-test [c]: the empty-input guard over one-char string c
 ;; (char-code of the empty subs reads the NUL terminator, 0 - the
@@ -168,56 +168,6 @@
 (defn char-range-test [lo hi c]
   (str "(and (<= (char-code " (render-literal lo) ") (char-code " c "))"
             " (<= (char-code " c ") (char-code " (render-literal hi) ")))" ))
-
-;; render-char-range [ir sv]: the one-char parser - skip
-;; first, then the range pred; the value the char consumed.
-(defn render-char-range [ir sv]
-  (let [lo (.lower ir)
-        hi (.upper ir)
-        SV (skip-expr sv)
-        C (str "(subs " SV " 0 1)")
-        msg (render-literal (str "expected a character in the range " lo "-" hi))]
-    (vector (str "(cond (and " (one-char-test C) " " (char-range-test lo hi C) ")"
-                      " (state/ParserMatch " C " (state/take-char " SV "))"
-                      " (state/ParserError " msg " " SV "))"))))
-
-;; render-not-char [ir sv]: the one-char parser - skip
-;; first, then the not-equal pred.
-(defn render-not-char [ir sv]
-  (let [ch (.char ir)
-        SV (skip-expr sv)
-        C (str "(subs " SV " 0 1)")
-        msg (render-literal (str "expected a character other than " ch))]
-    (vector (str "(cond (and " (one-char-test C) " (not (str= " C " " (render-literal ch) "))"
-                      ")"
-                      " (state/ParserMatch " C " (state/take-char " SV "))"
-                      " (state/ParserError " msg " " SV "))"))))
-
-;; render-string [lit sv]: the bare-String literal match -
-;; (str-prefix? S input) + N take-chars (N = the literal's length, 1
-;; for one char); let-free.
-(defn render-string [lit sv]
-  (let [SV (skip-expr sv)
-        L (render-literal lit)
-        msg (render-literal (str "expected " lit))]
-    (vector (str "(cond (str-prefix? " L " (.input " SV "))"
-                      " (state/ParserMatch " L " " (take-chars (count lit) SV) ")"
-                      " (state/ParserError " msg " " SV "))"))))
-
-;; render-ref [ir sv]: a call to the named rule over the threaded
-;; state - self or mutual, uniformly.
-(defn render-ref [ir sv]
-  (vector (str "(" (.name ir) " " sv ")")))
-
-;; render-always [ir sv]: (state/ParserMatch <v> sv) - the constant
-;; value's source is the render-constant protocol over it.
-(defn render-always [ir sv]
-  (let [v (.value ir)]
-    (vector (render-constant v sv))))
-
-;; render-error [ir sv]: (state/ParserError MSG sv).
-(defn render-error [ir sv]
-  (vector (str "(state/ParserError " (render-literal (.msg ir)) " " sv ")")))
 
 ;; =====================================================================
 ;; Phase 2 - render (item 4b.2): the wrapper ctors.
@@ -239,6 +189,9 @@
 ;;                 (raw/<n> <args...> <auto-loc>); the auto-loc is the
 ;;                 line where the form started (the entry state sv,
 ;;                 whitespace-skipped).
+;;
+;; The wrapper render-child impls are inlined in the extend-type
+;; blocks below; this section holds their helper defns.
 
 (extend-type grammar/Many
   (char-level [n]
@@ -375,39 +328,20 @@
       (comp (comp (butlast res) (butlast inner))
             (vector (str "(parse-then " (extract (last res)) " (fn [" (extract (get vnames i)) " " snext "] " (extract (last inner)) ")"))))))
 
-;; render-ignore [ir sv]: the Ignore wrapper - parse the
-;; child, discard the value (the fn binds _), thread the state; the
-;; standalone value is the unit (empty-vector).
-(defn render-ignore [ir sv]
-  (let [res (render-child (.parser ir) sv)]
-    (comp (butlast res)
-          (vector (str "(parse-then " (extract (last res)) " (fn [_ s2] (state/ParserMatch empty-vector s2))))")))))
-
-;; render-concat [ir sv]: the Concat wrapper - parse the
-;; children in sequence (nested parse-then), flatten-join their string
-;; values into ONE string.
-(defn render-concat [ir sv]
-  (let [cs (.parsers ir)
-        vnames (gen-vnames (count cs))]
-    (concat-tail cs 0 sv vnames (build-join cs vnames))))
-
-;; render-node [ir sv]: the Node wrapper - the child's value
-;; becomes the raw-AST ctor call (raw/<name> <args...> <auto-loc>); the
-;; auto-loc is the line where the form started (the entry state sv,
-;; whitespace-skipped).
-(defn render-node [ir sv]
-  (let [child (.parser ir)
-        res (render-child child sv)]
-    (comp (butlast res)
-          (vector (str "(parse-then " (extract (last res)) " (fn [v s2] (state/ParserMatch (raw/" (.name ir) " " (join-strings " " (comp (node-value-args child "v") (vector (str "(state/state-line (state/skip-whitespace " sv "))")))) ") s2))))")))))
-
 (extend-type grammar/CharRange
   (char-level [n]
     (Some None))
   (ir-value-shape [n]
     "string")
   (render-child [n sv]
-    (render-char-range n sv)))
+    (let [lo (.lower n)
+          hi (.upper n)
+          SV (skip-expr sv)
+          C (str "(subs " SV " 0 1)")
+          msg (render-literal (str "expected a character in the range " lo "-" hi))]
+      (vector (str "(cond (and " (one-char-test C) " " (char-range-test lo hi C) ")"
+                        " (state/ParserMatch " C " (state/take-char " SV "))"
+                        " (state/ParserError " msg " " SV "))")))))
 
 (extend-type grammar/NotChar
   (char-level [n]
@@ -415,7 +349,14 @@
   (ir-value-shape [n]
     "string")
   (render-child [n sv]
-    (render-not-char n sv)))
+    (let [ch (.char n)
+          SV (skip-expr sv)
+          C (str "(subs " SV " 0 1)")
+          msg (render-literal (str "expected a character other than " ch))]
+      (vector (str "(cond (and " (one-char-test C) " (not (str= " C " " (render-literal ch) "))"
+                        ")"
+                        " (state/ParserMatch " C " (state/take-char " SV "))"
+                        " (state/ParserError " msg " " SV "))")))))
 
 ;; the bare-String literal leaf (mixed in among the ctor values in
 ;; Any / All).
@@ -428,7 +369,12 @@
   (ir-value-shape [n]
     "string")
   (render-child [n sv]
-    (render-string n sv))
+    (let [SV (skip-expr sv)
+          L (render-literal n)
+          msg (render-literal (str "expected " n))]
+      (vector (str "(cond (str-prefix? " L " (.input " SV "))"
+                        " (state/ParserMatch " L " " (take-chars (count n) SV) ")"
+                        " (state/ParserError " msg " " SV "))"))))
   (value-shape [n]
     "string")
   (render-constant [n sv]
@@ -448,7 +394,7 @@
   (char-level [n]
     None)
   (render-child [n sv]
-    (render-ref n sv)))
+    (vector (str "(" (.name n) " " sv ")"))))
 
 (extend-type grammar/AlwaysSucceed
   (char-level [n]
@@ -456,19 +402,22 @@
   (ir-value-shape [n]
     (value-shape (.value n)))
   (render-child [n sv]
-    (render-always n sv)))
+    (let [v (.value n)]
+      (vector (render-constant v sv)))))
 
 (extend-type grammar/Error
   (char-level [n]
     None)
   (render-child [n sv]
-    (render-error n sv)))
+    (vector (str "(state/ParserError " (render-literal (.msg n)) " " sv ")"))))
 
 (extend-type grammar/Ignore
   (char-level [n]
     None)
   (render-child [n sv]
-    (render-ignore n sv))
+    (let [res (render-child (.parser n) sv)]
+      (comp (butlast res)
+            (vector (str "(parse-then " (extract (last res)) " (fn [_ s2] (state/ParserMatch empty-vector s2))))")))))
   (ignore? [n]
     (Some None)))
 
@@ -478,10 +427,15 @@
   (ir-value-shape [n]
     "string")
   (render-child [n sv]
-    (render-concat n sv)))
+    (let [cs (.parsers n)
+          vnames (gen-vnames (count cs))]
+      (concat-tail cs 0 sv vnames (build-join cs vnames)))))
 
 (extend-type grammar/Node
   (char-level [n]
     None)
   (render-child [n sv]
-    (render-node n sv)))
+    (let [child (.parser n)
+          res (render-child child sv)]
+      (comp (butlast res)
+            (vector (str "(parse-then " (extract (last res)) " (fn [v s2] (state/ParserMatch (raw/" (.name n) " " (join-strings " " (comp (node-value-args child "v") (vector (str "(state/state-line (state/skip-whitespace " sv "))")))) ") s2))))"))))))
