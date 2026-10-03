@@ -71,6 +71,25 @@
 (defp render-child [n sv]
   (abort (str "render-child: not yet implemented: " (type-name n))))
 
+;; ignore? [c]: Some None iff c is an Ignore wrapper (the All arity
+;; count skips it). A protocol with a default (None) so only Ignore
+;; needs an impl.
+(defp ignore? [c]
+  None)
+
+;; value-shape [v]: "string" / "vector" for a raw AlwaysSucceed value
+;; (a String or a Vector) - the shape that value contributes. A
+;; protocol; the defp's body is the abort for unsupported value types.
+(defp value-shape [v]
+  (abort (str "value-shape: unsupported value type: " (type-name v))))
+
+;; render-constant [v sv]: the source for an AlwaysSucceed constant
+;; value over the state variable sv - a String literal or the empty
+;; vector, as a ParserMatch. A protocol; the defp's body is the abort
+;; for unsupported value types.
+(defp render-constant [v sv]
+  (abort (str "render-constant: unsupported value type: " (type-name v))))
+
 ;; =====================================================================
 ;; Phase 2 - render (item 4b.1): the leaf ctors.
 ;;
@@ -190,26 +209,11 @@
 (defn render-ref [ir sv]
   (vector (str "(" (.name ir) " " sv ")")))
 
-;; always-value-dispatch: the AlwaysSucceed constant's source form -
-;; a String literal or the empty vector (the deftype-ctor empty field
-;; list). The parameter split (the type name passed as a parameter -
-;; the proven-safe dispatch shape).
-(defn always-value-dispatch [k v sv]
-  (cond (str= k "String")
-    (str "(state/ParserMatch " (render-literal v) " " sv ")")
-
-    (str= k "Vector")
-    (cond (= (count v) 0)
-      (str "(state/ParserMatch empty-vector " sv ")")
-
-      (abort "render-always: unsupported vector value"))
-
-    (abort (str "render-always: unsupported value type: " k))))
-
-;; render-always [ir sv]: (state/ParserMatch <v> sv).
+;; render-always [ir sv]: (state/ParserMatch <v> sv) - the constant
+;; value's source is the render-constant protocol over it.
 (defn render-always [ir sv]
   (let [v (.value ir)]
-    (vector (always-value-dispatch (type-name v) v sv))))
+    (vector (render-constant v sv))))
 
 ;; render-error [ir sv]: (state/ParserError MSG sv).
 (defn render-error [ir sv]
@@ -254,7 +258,7 @@
     (let [cs (.parsers n)]
       (reduce cs 0
               (fn [acc c]
-                (cond (str= (type-name c) "Ignore")
+                (cond (ignore? c)
                   acc
 
                   (+ acc 1)))))))
@@ -424,7 +428,21 @@
   (ir-value-shape [n]
     "string")
   (render-child [n sv]
-    (render-string n sv)))
+    (render-string n sv))
+  (value-shape [n]
+    "string")
+  (render-constant [n sv]
+    (str "(state/ParserMatch " (render-literal n) " " sv ")")))
+
+;; the AlwaysSucceed constant value (the unit) - a Vector.
+(extend-type Vector
+  (value-shape [n]
+    "vector")
+  (render-constant [n sv]
+    (cond (= (count n) 0)
+      (str "(state/ParserMatch empty-vector " sv ")")
+
+      (abort "render-constant: unsupported non-empty vector value"))))
 
 (extend-type grammar/Ref
   (char-level [n]
@@ -436,14 +454,7 @@
   (char-level [n]
     None)
   (ir-value-shape [n]
-    (let [v (.value n)]
-      (cond (str= (type-name v) "String")
-        "string"
-
-        (str= (type-name v) "Vector")
-        "vector"
-
-        (abort (str "ir-value-shape: unsupported AlwaysSucceed value: " (type-name v))))))
+    (value-shape (.value n)))
   (render-child [n sv]
     (render-always n sv)))
 
@@ -457,7 +468,9 @@
   (char-level [n]
     None)
   (render-child [n sv]
-    (render-ignore n sv)))
+    (render-ignore n sv))
+  (ignore? [n]
+    (Some None)))
 
 (extend-type grammar/Concat
   (char-level [n]
