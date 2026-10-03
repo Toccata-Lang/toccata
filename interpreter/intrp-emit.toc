@@ -33,6 +33,69 @@
 
 (add-ns grammar (module "intrp-grammar.toc"))
 
+;; char-level [n]: Some None iff the IRNode n classifies a single
+;; char (the char-level protocol over the IRNode ctors - phase 2 of the
+;; NodeIR redesign, docs/nodeir-redesign-plan.md). CharRange / NotChar
+;; are always char-level; Str iff its literal is one char; Any iff every
+;; alt is char-level (a reduce); Rule / Many delegate to their child;
+;; All / Ref / Node / Concat / Ignore / AlwaysSucceed / Error are never.
+(defp char-level [n])
+
+;; analyze-node: the fold's handler as a PROTOCOL (one extend-type
+;; impl per ctor type - the v1 EBNF pattern). NOT a defn dispatching
+;; on type-name: that shape deterministically miscompiles under
+;; new-toc for any fold reaching a map-recurse ctor (Any / All /
+;; Concat) - "Compiler screwed up. Incomplete result" (Tag SUB),
+;; even with a plain no-cond handler. The protocol dispatch is the
+;; shape that runs clean (verified 2026-09-27, item 4a).
+(defp analyze-node [v]
+  ! v grammar/ParserCombinator
+  ! -> IRNode
+)
+
+;; --- value-shape helpers (for Concat's join and Node's spread) -------
+
+;; ir-value-shape [ir]: "string" iff the position's value is a single
+;; String; "vector" iff it is a Vector of strings. Structural (the IR),
+;; per the value-shape discipline (every alt of an Any feeding a shared
+;; position yields the same shape). A protocol (defp + one extend-type
+;; impl per supported ctor - the char-level pattern); the defp's body is
+;; the abort for the unsupported kinds.
+;;   - char-level leaves (CharRange / NotChar / Str) and Concat
+;;     -> "string"
+;;   - Many -> "string" iff char-level (fast path, one run string),
+;;     else "vector" (slow path, vector of child values)
+;;   - All -> "vector" (vector of non-Ignore sub-values)
+;;   - Any / Rule -> the first-alt / child's shape
+;;   - AlwaysSucceed -> the constant's type (String -> "string",
+;;     Vector -> "vector")
+;;   - Ref / Node / Ignore / Error -> the default abort (Ref needs the
+;;     rule set, supplied at module assembly 4c.2; the rest are not
+;;     value sources in scope (a))
+(defp ir-value-shape [n]
+  (abort (str "ir-value-shape: unsupported kind: " (type-name n))))
+
+;; ir-value-arity [ir]: the static arity of a "vector"-shaped value (the
+;; number of ctor args a Node spreads it into). Only meaningful when
+;; ir-value-shape is "vector". A protocol (defp + one extend-type impl
+;; per supported ctor - the ir-value-shape pattern); the defp's body is
+;; the abort for the unsupported kinds.
+;;   - All -> the count of non-Ignore children
+;;   - Any / Rule -> the first-alt / child's arity
+;;   - Many (slow) / the rest -> the default abort (dynamic arity - not
+;;     spreadable; not in scope (a))
+(defp ir-value-arity [n]
+  (abort (str "ir-value-arity: unsupported kind: " (type-name n))))
+
+;; render-child [ir sv]: the render dispatch - the source lines for ir
+;; over the state variable sv. A protocol (defp + one extend-type impl
+;; per rendered ctor - the char-level pattern); the defp's body is the
+;; abort for the unrendered ctors. The leaf ctors (4b.1) and the
+;; wrapper ctors (4b.2) have impls; the remaining ctors (Any / All /
+;; Many / Rule) are the later items (4b.3-4b.7).
+(defp render-child [n sv]
+  (abort (str "render-child: not yet implemented: " (type-name n))))
+
 ;; IRNode: the shape of an analyzed node (NodeIR redesign). The IR
 ;; was the positional data vector, then the NodeIR [node char-level?]
 ;; wrapper + IRNode, and is now the bare IRNode with the char-level
@@ -54,14 +117,6 @@
   (Ignore [ignore-child])
   (AlwaysSucceed [as-value])
   (Error [error-msg]))
-
-;; char-level [n]: Some None iff the IRNode n classifies a single
-;; char (the char-level protocol over the IRNode ctors - phase 2 of the
-;; NodeIR redesign, docs/nodeir-redesign-plan.md). CharRange / NotChar
-;; are always char-level; Str iff its literal is one char; Any iff every
-;; alt is char-level (a reduce); Rule / Many delegate to their child;
-;; All / Ref / Node / Concat / Ignore / AlwaysSucceed / Error are never.
-(defp char-level [n])
 
 
 (extend-type CharRange
@@ -182,18 +237,6 @@
 (defn ir-error [v]
   (Error (.msg v)))
 
-
-;; analyze-node: the fold's handler as a PROTOCOL (one extend-type
-;; impl per ctor type - the v1 EBNF pattern). NOT a defn dispatching
-;; on type-name: that shape deterministically miscompiles under
-;; new-toc for any fold reaching a map-recurse ctor (Any / All /
-;; Concat) - "Compiler screwed up. Incomplete result" (Tag SUB),
-;; even with a plain no-cond handler. The protocol dispatch is the
-;; shape that runs clean (verified 2026-09-27, item 4a).
-(defp analyze-node [v]
-  ! v grammar/ParserCombinator
-  ! -> IRNode
-)
 
 
 (extend-type grammar/CharRange
@@ -426,28 +469,6 @@
 ;; ((def render-child)) before the wrappers, and its defp comes after
 ;; the wrappers it calls.
 
-;; --- value-shape helpers (for Concat's join and Node's spread) -------
-
-;; ir-value-shape [ir]: "string" iff the position's value is a single
-;; String; "vector" iff it is a Vector of strings. Structural (the IR),
-;; per the value-shape discipline (every alt of an Any feeding a shared
-;; position yields the same shape). A protocol (defp + one extend-type
-;; impl per supported ctor - the char-level pattern); the defp's body is
-;; the abort for the unsupported kinds.
-;;   - char-level leaves (CharRange / NotChar / Str) and Concat
-;;     -> "string"
-;;   - Many -> "string" iff char-level (fast path, one run string),
-;;     else "vector" (slow path, vector of child values)
-;;   - All -> "vector" (vector of non-Ignore sub-values)
-;;   - Any / Rule -> the first-alt / child's shape
-;;   - AlwaysSucceed -> the constant's type (String -> "string",
-;;     Vector -> "vector")
-;;   - Ref / Node / Ignore / Error -> the default abort (Ref needs the
-;;     rule set, supplied at module assembly 4c.2; the rest are not
-;;     value sources in scope (a))
-(defp ir-value-shape [n]
-  (abort (str "ir-value-shape: unsupported kind: " (type-name n))))
-
 (extend-type CharRange
   (ir-value-shape [n]
     "string"))
@@ -494,18 +515,6 @@
 
         (abort (str "ir-value-shape: unsupported AlwaysSucceed value: " (type-name v)))))))
 
-
-;; ir-value-arity [ir]: the static arity of a "vector"-shaped value (the
-;; number of ctor args a Node spreads it into). Only meaningful when
-;; ir-value-shape is "vector". A protocol (defp + one extend-type impl
-;; per supported ctor - the ir-value-shape pattern); the defp's body is
-;; the abort for the unsupported kinds.
-;;   - All -> the count of non-Ignore children
-;;   - Any / Rule -> the first-alt / child's arity
-;;   - Many (slow) / the rest -> the default abort (dynamic arity - not
-;;     spreadable; not in scope (a))
-(defp ir-value-arity [n]
-  (abort (str "ir-value-arity: unsupported kind: " (type-name n))))
 
 (extend-type All
   (ir-value-arity [n]
@@ -606,8 +615,6 @@
 
 ;; --- the render dispatch (crutch-declared; the wrappers call it) -----
 
-(def render-child)
-
 ;; concat-tail [cs i sv vnames join]: the source lines for Concat
 ;; children i..n-1, threading the state. Returns a Vector of Strings:
 ;; the children's helper lines, then ONE final line - the nested
@@ -647,15 +654,6 @@
         res (render-child child sv)]
     (comp (butlast res)
           (vector (str "(parse-then " (extract (last res)) " (fn [v s2] (state/ParserMatch (raw/" (.node-name ir) " " (join-strings " " (comp (node-value-args child "v") (vector (str "(state/state-line (state/skip-whitespace " sv "))")))) ") s2))))")))))
-
-;; render-child [ir sv]: the render dispatch - the source lines for ir
-;; over the state variable sv. A protocol (defp + one extend-type impl
-;; per rendered ctor - the char-level pattern); the defp's body is the
-;; abort for the unrendered ctors. The leaf ctors (4b.1) and the
-;; wrapper ctors (4b.2) have impls; the remaining ctors (Any / All /
-;; Many / Rule) are the later items (4b.3-4b.7).
-(defp render-child [n sv]
-  (abort (str "render-child: not yet implemented: " (type-name n))))
 
 (extend-type CharRange
   (render-child [n sv]
