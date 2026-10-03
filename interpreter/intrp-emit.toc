@@ -4,59 +4,34 @@
 ;; emits a recursive-descent parser module in Toccata source for it
 ;; (docs/parser-generator-plan.md).
 ;;
-;; Item 4a (emitter v3, clean slate): phase 1 - analyze. The grammar
-;; combinator is analyzed into a bare IRNode by ONE fold over the core
-;; recursion scheme (hvm-core.toc fold, over the ParserCombinator
-;; recurse impls - no new walker). Ref and String are leaves, so the
-;; fold terminates structurally even though the generated reader is
-;; recursive. The IR is the IRNode multi-ctor deftype (the shape -
-;; named fields per ctor, raw fields on leaves, child IRs on
-;; containers), and the char-level classification is the char-level
-;; protocol over the IRNode ctors (Some None iff the node classifies
-;; a single char) - docs/nodeir-redesign-plan.md. No generated source
-;; is built in this phase - the fold's clauses do no to-str over
-;; fold-internal (superposed) values (the v2 to-str hazard).
+;; No intermediate IR: the emit protocols (char-level, ir-value-shape,
+;; ir-value-arity, render-child) are extended directly onto the
+;; ParserCombinator ctor types (and String, for the bare-literal leaf)
+;; - the v1 EBNF emitter's pattern (intrp-ebnf.toc). The render phase
+;; recurses over the grammar tree via render-child; there is no
+;; separate analyze/fold pass. Bare String literals are first-class
+;; grammar leaves (mixed in among the ctor values in Any / All), so
+;; String carries the literal impls.
 ;;
-;; DEVIATION from the plan's Settled design (reported 2026-09-27,
-;; item 4a as-built): the plan specifies `h` as ONE defn dispatching
-;; on type-name ((defn h [v] (h-dispatch (type-name v) v)) with a
-;; flat cond). That shape DETERMINISTICALLY MISCOMPILES under
-;; new-toc: any fold whose handler is a defn crashes with
-;; "Compiler screwed up. Incomplete result" (runtime3.c Tag SUB
-;; check) as soon as the fold reaches a ctor whose recurse maps over
-;; a vector (Any / All / Concat) - even a plain handler with no cond
-;; at all. The protocol shape (defp + one extend-type impl per ctor
-;; type, the v1 EBNF emitter's pattern, intrp-ebnf.toc) works: the
-;; same fold over the same Any value runs clean. So the handler is
-;; the `analyze-node` protocol; `analyze [pc]` = `(fold pc
-;; analyze-node)` keeps the plan's entry point.
+;; The grammar's field names are shared across ctors (.parsers on
+;; All / Any / Concat, .name on Rule / Ref / Node, .parser on
+;; Ignore / Many) - that is fine here because field getters are
+;; protocols, so each dispatches on the value's ctor.
 
 (add-ns grammar (module "intrp-grammar.toc"))
 
-;; char-level [n]: Some None iff the IRNode n classifies a single
-;; char (the char-level protocol over the IRNode ctors - phase 2 of the
-;; NodeIR redesign, docs/nodeir-redesign-plan.md). CharRange / NotChar
-;; are always char-level; Str iff its literal is one char; Any iff every
-;; alt is char-level (a reduce); Rule / Many delegate to their child;
-;; All / Ref / Node / Concat / Ignore / AlwaysSucceed / Error are never.
+;; char-level [n]: Some None iff the ParserCombinator n classifies a
+;; single char. CharRange / NotChar are always char-level; a bare
+;; String literal iff it is one char; Any iff every alt is char-level
+;; (a reduce); Rule / Many delegate to their child; All / Ref / Node /
+;; Concat / Ignore / AlwaysSucceed / Error are never.
 (defp char-level [n])
-
-;; analyze-node: the fold's handler as a PROTOCOL (one extend-type
-;; impl per ctor type - the v1 EBNF pattern). NOT a defn dispatching
-;; on type-name: that shape deterministically miscompiles under
-;; new-toc for any fold reaching a map-recurse ctor (Any / All /
-;; Concat) - "Compiler screwed up. Incomplete result" (Tag SUB),
-;; even with a plain no-cond handler. The protocol dispatch is the
-;; shape that runs clean (verified 2026-09-27, item 4a).
-(defp analyze-node [v]
-  ! v grammar/ParserCombinator
-  ! -> IRNode
-)
 
 ;; --- value-shape helpers (for Concat's join and Node's spread) -------
 
 ;; ir-value-shape [ir]: "string" iff the position's value is a single
-;; String; "vector" iff it is a Vector of strings. Structural (the IR),
+;; String; "vector" iff it is a Vector of strings. Structural (the
+;; grammar tree),
 ;; per the value-shape discipline (every alt of an Any feeding a shared
 ;; position yields the same shape). A protocol (defp + one extend-type
 ;; impl per supported ctor - the char-level pattern); the defp's body is
@@ -96,98 +71,10 @@
 (defp render-child [n sv]
   (abort (str "render-child: not yet implemented: " (type-name n))))
 
-;; IRNode: the shape of an analyzed node (NodeIR redesign). The IR
-;; was the positional data vector, then the NodeIR [node char-level?]
-;; wrapper + IRNode, and is now the bare IRNode with the char-level
-;; protocol. No ! annotations (new-toc hazard on multi-field ctors).
-;; The field names are unique across every type in the build (grammar
-;; and state included), so the render phase can use direct .field
-;; getters.
-(deftype IRNode
-  (CharRange [lo hi])
-  (NotChar [ch])
-  (Str [lit])
-  (Any [any-alts])
-  (All [all-parsers])
-  (Many [many-child])
-  (Rule [rule-name rule-child])
-  (Ref [ref-name])
-  (Node [node-name node-child])
-  (Concat [concat-parsers])
-  (Ignore [ignore-child])
-  (AlwaysSucceed [as-value])
-  (Error [error-msg]))
-
-;; The analyze-node impls call the IRNode ctor directly. The leaf
-;; ctors (CharRange / NotChar) recurse leaves raw, so their fields are
-;; the grammar's raw values; the container ctors recurse reassembled,
-;; so their fields hold the children's bare IRNodes.
-(extend-type grammar/CharRange
-  (analyze-node [v]
-    (CharRange (.lower v) (.upper v))))
-
-(extend-type grammar/NotChar
-  (analyze-node [v]
-    (NotChar (.char v))))
-
-;; the bare-String literal (the Str ctor).
-(extend-type String
-  (analyze-node [v]
-    (Str v)))
-
-;; Any over the alts (the char-level classification is the protocol's).
-(extend-type grammar/Any
-  (analyze-node [v]
-    (Any (.parsers v))))
-
-(extend-type grammar/All
-  (analyze-node [v]
-    (All (.parsers v))))
-
-(extend-type grammar/Many
-  (analyze-node [v]
-    (Many (.parser v))))
-
-(extend-type grammar/Rule
-  (analyze-node [v]
-    (Rule (.name v) (.parser v))))
-
-;; Ref: a leaf (the fold stops here - the named rule's IR is the
-;; driver's to supply at render time; no force-time global
-;; resolution). Never char-level for the same reason.
-(extend-type grammar/Ref
-  (analyze-node [v]
-    (Ref (.name v))))
-
-(extend-type grammar/Node
-  (analyze-node [v]
-    (Node (.name v) (.parser v))))
-
-(extend-type grammar/Concat
-  (analyze-node [v]
-    (Concat (.parsers v))))
-
-(extend-type grammar/Ignore
-  (analyze-node [v]
-    (Ignore (.parser v))))
-
-(extend-type grammar/AlwaysSucceed
-  (analyze-node [v]
-    (AlwaysSucceed (.value v))))
-
-(extend-type grammar/Error
-  (analyze-node [v]
-    (Error (.msg v))))
-
-;; analyze [pc]: the phase-1 catamorphism - the core fold over the
-;; combinator's recurse impls (hvm-core.toc:587). -> IRNode
-(defn analyze [pc]
-  (fold pc analyze-node))
-
 ;; =====================================================================
 ;; Phase 2 - render (item 4b.1): the leaf ctors.
 ;;
-;; Each render function returns the source LINES for its IR node:
+;; Each render function returns the source LINES for its grammar node:
 ;; zero or more lifted helper defn lines, then ONE final line - a
 ;; single Toccata expression that, with the state variable sv in
 ;; scope, evaluates to a ParserResults. The leaf ctors lift nothing:
@@ -263,11 +150,11 @@
   (str "(and (<= (char-code " (render-literal lo) ") (char-code " c "))"
             " (<= (char-code " c ") (char-code " (render-literal hi) ")))" ))
 
-;; render-char-range [ir sv]: the one-char parser (ctor table) - skip
+;; render-char-range [ir sv]: the one-char parser - skip
 ;; first, then the range pred; the value the char consumed.
 (defn render-char-range [ir sv]
-  (let [lo (.lo ir)
-        hi (.hi ir)
+  (let [lo (.lower ir)
+        hi (.upper ir)
         SV (skip-expr sv)
         C (str "(subs " SV " 0 1)")
         msg (render-literal (str "expected a character in the range " lo "-" hi))]
@@ -275,10 +162,10 @@
                       " (state/ParserMatch " C " (state/take-char " SV "))"
                       " (state/ParserError " msg " " SV "))"))))
 
-;; render-not-char [ir sv]: the one-char parser (ctor table) - skip
+;; render-not-char [ir sv]: the one-char parser - skip
 ;; first, then the not-equal pred.
 (defn render-not-char [ir sv]
-  (let [ch (.ch ir)
+  (let [ch (.char ir)
         SV (skip-expr sv)
         C (str "(subs " SV " 0 1)")
         msg (render-literal (str "expected a character other than " ch))]
@@ -287,12 +174,11 @@
                       " (state/ParserMatch " C " (state/take-char " SV "))"
                       " (state/ParserError " msg " " SV "))"))))
 
-;; render-string [ir sv]: the bare-String literal match (ctor table) -
+;; render-string [lit sv]: the bare-String literal match -
 ;; (str-prefix? S input) + N take-chars (N = the literal's length, 1
 ;; for one char); let-free.
-(defn render-string [ir sv]
-  (let [lit (.lit ir)
-        SV (skip-expr sv)
+(defn render-string [lit sv]
+  (let [SV (skip-expr sv)
         L (render-literal lit)
         msg (render-literal (str "expected " lit))]
     (vector (str "(cond (str-prefix? " L " (.input " SV "))"
@@ -300,9 +186,9 @@
                       " (state/ParserError " msg " " SV "))"))))
 
 ;; render-ref [ir sv]: a call to the named rule over the threaded
-;; state (ctor table) - self or mutual, uniformly.
+;; state - self or mutual, uniformly.
 (defn render-ref [ir sv]
-  (vector (str "(" (.ref-name ir) " " sv ")")))
+  (vector (str "(" (.name ir) " " sv ")")))
 
 ;; always-value-dispatch: the AlwaysSucceed constant's source form -
 ;; a String literal or the empty vector (the deftype-ctor empty field
@@ -320,14 +206,14 @@
 
     (abort (str "render-always: unsupported value type: " k))))
 
-;; render-always [ir sv]: (state/ParserMatch <v> sv) (ctor table).
+;; render-always [ir sv]: (state/ParserMatch <v> sv).
 (defn render-always [ir sv]
-  (let [v (.as-value ir)]
+  (let [v (.value ir)]
     (vector (always-value-dispatch (type-name v) v sv))))
 
-;; render-error [ir sv]: (state/ParserError MSG sv) (ctor table).
+;; render-error [ir sv]: (state/ParserError MSG sv).
 (defn render-error [ir sv]
-  (vector (str "(state/ParserError " (render-literal (.error-msg ir)) " " sv ")")))
+  (vector (str "(state/ParserError " (render-literal (.msg ir)) " " sv ")")))
 
 ;; =====================================================================
 ;; Phase 2 - render (item 4b.2): the wrapper ctors.
@@ -350,22 +236,22 @@
 ;;                 line where the form started (the entry state sv,
 ;;                 whitespace-skipped).
 
-(extend-type Many
+(extend-type grammar/Many
   (char-level [n]
-    (char-level (.many-child n)))
+    (char-level (.parser n)))
   (ir-value-shape [n]
-    (cond (char-level (.many-child n))
+    (cond (char-level (.parser n))
       "string"
 
       "vector")))
 
-(extend-type All
+(extend-type grammar/All
   (char-level [n]
     None)
   (ir-value-shape [n]
     "vector")
   (ir-value-arity [n]
-    (let [cs (.all-parsers n)]
+    (let [cs (.parsers n)]
       (reduce cs 0
               (fn [acc c]
                 (cond (str= (type-name c) "Ignore")
@@ -373,23 +259,23 @@
 
                   (+ acc 1)))))))
 
-(extend-type Any
+(extend-type grammar/Any
   (char-level [n]
-    (reduce (.any-alts n) (Some None)
+    (reduce (.parsers n) (Some None)
             (fn [acc a]
               (and acc (char-level a)))))
   (ir-value-shape [n]
-    (ir-value-shape (extract (get (.any-alts n) 0))))
+    (ir-value-shape (extract (get (.parsers n) 0))))
   (ir-value-arity [n]
-    (ir-value-arity (extract (get (.any-alts n) 0)))))
+    (ir-value-arity (extract (get (.parsers n) 0)))))
 
-(extend-type Rule
+(extend-type grammar/Rule
   (char-level [n]
-    (char-level (.rule-child n)))
+    (char-level (.parser n)))
   (ir-value-shape [n]
-    (ir-value-shape (.rule-child n)))
+    (ir-value-shape (.parser n)))
   (ir-value-arity [n]
-    (ir-value-arity (.rule-child n))))
+    (ir-value-arity (.parser n))))
 
 
 ;; vec-arg-exprs [v n]: n arg expressions extracting elements 0..n-1
@@ -402,7 +288,7 @@
           (str "(extract (get " v " " (- n 1) ")"))))
 
 ;; node-value-args [child-ir v]: the ctor arg expressions (no auto-loc)
-;; for a Node whose child has IR child-ir and whose value is bound to
+;; for a Node whose child is child-ir and whose value is bound to
 ;; variable v. A "string"-shaped child contributes one arg (v); a
 ;; "vector"-shaped child contributes its arity many args (extracted
 ;; elements).
@@ -485,33 +371,33 @@
       (comp (comp (butlast res) (butlast inner))
             (vector (str "(parse-then " (extract (last res)) " (fn [" (extract (get vnames i)) " " snext "] " (extract (last inner)) ")"))))))
 
-;; render-ignore [ir sv]: the Ignore wrapper (ctor table) - parse the
+;; render-ignore [ir sv]: the Ignore wrapper - parse the
 ;; child, discard the value (the fn binds _), thread the state; the
 ;; standalone value is the unit (empty-vector).
 (defn render-ignore [ir sv]
-  (let [res (render-child (.ignore-child ir) sv)]
+  (let [res (render-child (.parser ir) sv)]
     (comp (butlast res)
           (vector (str "(parse-then " (extract (last res)) " (fn [_ s2] (state/ParserMatch empty-vector s2))))")))))
 
-;; render-concat [ir sv]: the Concat wrapper (ctor table) - parse the
+;; render-concat [ir sv]: the Concat wrapper - parse the
 ;; children in sequence (nested parse-then), flatten-join their string
 ;; values into ONE string.
 (defn render-concat [ir sv]
-  (let [cs (.concat-parsers ir)
+  (let [cs (.parsers ir)
         vnames (gen-vnames (count cs))]
     (concat-tail cs 0 sv vnames (build-join cs vnames))))
 
-;; render-node [ir sv]: the Node wrapper (ctor table) - the child's value
+;; render-node [ir sv]: the Node wrapper - the child's value
 ;; becomes the raw-AST ctor call (raw/<name> <args...> <auto-loc>); the
 ;; auto-loc is the line where the form started (the entry state sv,
 ;; whitespace-skipped).
 (defn render-node [ir sv]
-  (let [child (.node-child ir)
+  (let [child (.parser ir)
         res (render-child child sv)]
     (comp (butlast res)
-          (vector (str "(parse-then " (extract (last res)) " (fn [v s2] (state/ParserMatch (raw/" (.node-name ir) " " (join-strings " " (comp (node-value-args child "v") (vector (str "(state/state-line (state/skip-whitespace " sv "))")))) ") s2))))")))))
+          (vector (str "(parse-then " (extract (last res)) " (fn [v s2] (state/ParserMatch (raw/" (.name ir) " " (join-strings " " (comp (node-value-args child "v") (vector (str "(state/state-line (state/skip-whitespace " sv "))")))) ") s2))))")))))
 
-(extend-type CharRange
+(extend-type grammar/CharRange
   (char-level [n]
     (Some None))
   (ir-value-shape [n]
@@ -519,7 +405,7 @@
   (render-child [n sv]
     (render-char-range n sv)))
 
-(extend-type NotChar
+(extend-type grammar/NotChar
   (char-level [n]
     (Some None))
   (ir-value-shape [n]
@@ -527,9 +413,11 @@
   (render-child [n sv]
     (render-not-char n sv)))
 
-(extend-type Str
+;; the bare-String literal leaf (mixed in among the ctor values in
+;; Any / All).
+(extend-type String
   (char-level [n]
-    (cond (= (count (.lit n)) 1)
+    (cond (= (count n) 1)
       (Some None)
 
       None))
@@ -538,17 +426,17 @@
   (render-child [n sv]
     (render-string n sv)))
 
-(extend-type Ref
+(extend-type grammar/Ref
   (char-level [n]
     None)
   (render-child [n sv]
     (render-ref n sv)))
 
-(extend-type AlwaysSucceed
+(extend-type grammar/AlwaysSucceed
   (char-level [n]
     None)
   (ir-value-shape [n]
-    (let [v (.as-value n)]
+    (let [v (.value n)]
       (cond (str= (type-name v) "String")
         "string"
 
@@ -559,19 +447,19 @@
   (render-child [n sv]
     (render-always n sv)))
 
-(extend-type Error
+(extend-type grammar/Error
   (char-level [n]
     None)
   (render-child [n sv]
     (render-error n sv)))
 
-(extend-type Ignore
+(extend-type grammar/Ignore
   (char-level [n]
     None)
   (render-child [n sv]
     (render-ignore n sv)))
 
-(extend-type Concat
+(extend-type grammar/Concat
   (char-level [n]
     None)
   (ir-value-shape [n]
@@ -579,7 +467,7 @@
   (render-child [n sv]
     (render-concat n sv)))
 
-(extend-type Node
+(extend-type grammar/Node
   (char-level [n]
     None)
   (render-child [n sv]
