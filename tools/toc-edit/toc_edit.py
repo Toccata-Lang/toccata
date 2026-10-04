@@ -144,6 +144,50 @@ def resolve_path(ast, path):
     return node
 
 
+# Whitespace byte values: the only bytes a file may contain outside
+# node spans. Everything else must be owned by a top-level node.
+_WS_BYTES = frozenset(b" \t\n\r\f\v")
+
+
+def leftover_bytes(raw, ast):
+    """Offsets of non-whitespace bytes not covered by any top-level node
+    span (forms and comments).
+
+    The AST must account for the ENTIRE file: new-toc silently accepts
+    stray bytes that no node owns (observed 2026-09-27: a file ending
+    `(defn square [x] (* x x)))` loads clean, and the same stray `)`
+    between forms does too), so a clean new-toc load is not proof the
+    file is fully parsed. Returns [] when every non-whitespace byte is
+    owned; otherwise the offending offsets in file order.
+    """
+    spans = sorted((n["start"], n["end"]) for n in ast)
+    out = []
+    pos = 0
+    for s, e in spans:
+        for off in range(pos, min(s, len(raw))):
+            if raw[off] not in _WS_BYTES:
+                out.append(off)
+        pos = max(pos, e)
+    for off in range(pos, len(raw)):
+        if raw[off] not in _WS_BYTES:
+            out.append(off)
+    return out
+
+
+def _line_of(raw, off):
+    """1-based line number of byte offset `off` in `raw`."""
+    return raw.count(b"\n", 0, off) + 1
+
+
+def _leftover_message(file, raw, leftovers):
+    first = leftovers[0]
+    return (
+        f"toc_edit: {file}: {len(leftovers)} leftover byte(s) not owned by "
+        f"any form or comment (first at byte {first}, line "
+        f"{_line_of(raw, first)}); the file is not fully accounted for\n"
+    )
+
+
 def _node_text(raw, node):
     """The node's verbatim source text: file[start:end] (byte slice)."""
     return raw[node["start"]:node["end"]].decode("utf-8", errors="replace")
@@ -240,8 +284,12 @@ def apply_edit(file, new_bytes):
 
     Writes new_bytes to a temp file in the SAME directory as `file` (so
     the rename over the original is atomic), runs new-toc on the temp,
-    and on 'clean' atomically renames it over the original. The original
-    is never clobbered by a rejected or unverified edit.
+    and on 'clean' runs the coverage gate (the ast-json dump must
+    account for every non-whitespace byte — new-toc silently accepts
+    stray bytes) and only then atomically renames over the original.
+    A candidate with leftover bytes is a rejection like any other
+    (`.rejected` saved, message printed, original untouched). The
+    original is never clobbered by a rejected or unverified edit.
 
     Returns ('ok', None) on success. On 'error' (rejection) the candidate
     is saved as `<name>.rejected` beside the original (overwriting any
@@ -265,6 +313,22 @@ def apply_edit(file, new_bytes):
         raise
     verdict = classify(stderr)
     if verdict == "clean":
+        # Coverage gate: a clean new-toc load is not enough — the AST
+        # must account for every non-whitespace byte of the candidate
+        # (new-toc silently accepts stray bytes, e.g. an extra `)`).
+        try:
+            ast = run_ast_json(tmp)
+        except TocEditError:
+            tmp.unlink(missing_ok=True)
+            raise
+        raw = tmp.read_bytes()
+        leftovers = leftover_bytes(raw, ast)
+        if leftovers:
+            msg = _leftover_message(str(path), raw, leftovers)
+            _rejected_path(path).write_bytes(new_bytes)
+            sys.stderr.write(msg)
+            tmp.unlink()
+            return ("error", msg)
         os.replace(tmp, path)
         return ("ok", None)
     tmp.unlink()
@@ -383,11 +447,22 @@ def cmd_insert(args):
 def cmd_check(args):
     """`check`: run new-toc on the file, print its stderr, exit 1 on
     'error', 0 otherwise (see docs/toc-edit-spec.md, Failure handling).
+    Also runs the coverage gate: the ast-json dump must account for
+    every non-whitespace byte of the file (no leftover bytes), else
+    exit 1 with a message naming the first leftover byte and line.
     """
     _code, _stdout, stderr = run_new_toc(args.file)
     if stderr:
         sys.stderr.write(stderr)
-    sys.exit(1 if classify(stderr) == "error" else 0)
+    if classify(stderr) == "error":
+        sys.exit(1)
+    ast = run_ast_json(args.file)
+    raw = Path(args.file).read_bytes()
+    leftovers = leftover_bytes(raw, ast)
+    if leftovers:
+        sys.stderr.write(_leftover_message(args.file, raw, leftovers))
+        sys.exit(1)
+    sys.exit(0)
 
 
 def build_parser():

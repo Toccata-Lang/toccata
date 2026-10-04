@@ -33,6 +33,11 @@ Lessons drawn from the parser emitter's IR deletion
   inlined in a `reduce`: a `defp` whose body is the default (e.g. `(Some v)`)
   with a single impl for the exceptional type, used with `filter`.
 
+* Idioms already in the codebase are the style guide: before inventing a
+  structure for a recurring situation, check how sibling code handles it and
+  copy the shape (cf. the Maybe-defaulting idiom `(either (map (get …) fn)
+  default)` in `interpreter/intrp-rdr.toc`).
+
 * Field getters are protocol-dispatched on the value's ctor — shared field
   names across ctors (`.parsers` on three different ctors) are fine. Do not
   rename fields for build-wide uniqueness.
@@ -178,6 +183,17 @@ Lessons drawn from the parser emitter's IR deletion
   Use `(extract (get v i))` / `(extract (first v))` only where the index
   is in range by construction (static arity, checked loop bound). Handling
   a possible miss requires branching on the Maybe (until `match` lands).
+
+* Structure around the Maybe, don't count around it: no `(count v)`-
+  then-branch-then-`(extract (get v i))` case analysis. Let `(first v)` /
+  `(get v i)` carry the information — `None` IS the miss case (the
+  `either` default), `Some x` is the hit, and cardinality questions are
+  asked of the data in hand (`(empty? (rest v))`). The idiom:
+  `(either (map (first v) (fn [x] …)) default)`.
+
+* Bind, don't re-look-up: when mapping over a Maybe (or a collection), use
+  the value bound in the `fn` inside the branch — do not make a second
+  `get`/`first` + `extract` that must re-assert the same index invariant.
 
 * `reduce` is a left fold: `(reduce coll init f)` applies `(f acc elem)` per
   element and returns `init` for an empty collection. `reverse`, `last`, and

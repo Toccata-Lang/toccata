@@ -253,48 +253,47 @@ state]`, `make-state`, `state-line`, `take-char`, `skip-comment`,
 depends on `intrp-state.toc` + `intrp-raw-ast.toc` and on NOTHING
 else — the dependency on the disowned hand-written reader is severed.
 
-### Emitter (v3, clean slate, fold-based)
+### Emitter (v3, clean slate, protocol-based)
 
-Two phases over the grammar data:
+One phase over the grammar data — no intermediate IR: the render
+dispatch is a protocol extended directly onto the grammar's
+`ParserCombinator` ctor types (and `String`, for the bare-literal
+leaf) — the v1 EBNF emitter's pattern (`intrp-ebnf.toc`) and the
+style doc's first Design lesson (docs/toccata-style.md): dispatch on
+the data you have; a parallel deftype IR is only justified when it
+actually transforms the shape. (Items 4a-4b.2 first built an analyze
+phase — the core `fold` with an `analyze-node` protocol handler into
+a `NodeIR`, later redesigned to a bare `IRNode`; the IR was then
+deleted once the render protocol proved directly extensible onto the
+grammar types. The defn-handler miscompile that forced
+`analyze-node` to be a protocol stands — Inherited verified facts,
+2026-09-27 item 4a.)
 
-**Phase 1 — analyze.** `analyze [pc]` = `(fold pc analyze-node)` —
-the core `fold`, no new walker. The handler is a PROTOCOL —
-`defp analyze-node` + one `extend-type` impl per ctor type (the v1
-EBNF emitter's pattern, `intrp-ebnf.toc`), NOT a defn dispatching
-on `type-name`: a defn handler (even the parameter-split shape
-`h` / `h-dispatch`) deterministically miscompiles as soon as the
-fold reaches a map-recurse ctor (Any / All / Concat) — "Compiler
-screwed up. Incomplete result" (Tag SUB), 5/5, even with a plain
-no-cond handler (Inherited verified facts, 2026-09-27 item 4a;
-deviation recorded in the item-4a as-built note). After `recurse`
-reassembles a node, container ctors' fields hold
-children's IR values; leaves hold raw fields. `Ref` and `String`
-are leaves, so the fold terminates structurally even though the
-generated reader is recursive. The IR is the bare `IRNode`
-multi-ctor deftype — 13 ctors mirroring the grammar's (bare `String`
-→ `Str`, since a ctor named `String` collides with the core `String`
-type), with named fields unique across every type in the build (so
-the render phase uses direct `.field` getters); the char-level
-classification is the `char-level` protocol over the `IRNode` ctors
-(`Some None` iff the node classifies a single char — CharRange /
-NotChar / one-char Str; Any iff all alts; Rule / Many iff child).
-
-**Phase 2 — render.** A plain `defn` walks the IR with context
-(enclosing rule name + helper-name prefix) and emits source per ctor:
+**Render.** The dispatch `render-child` is a `defp` (the body is the
+abort for unrendered ctors) + one `extend-type` impl per rendered
+ctor, over the state variable; each impl returns the source LINES
+for its node — zero or more lifted helper defn lines, then ONE final
+line (a single Toccata expression that, with the state variable in
+scope, evaluates to a `ParserResults`). Context (enclosing rule name
++ helper-name prefix) is threaded at 4b.6. The char-level
+classification (the `Many` fast/slow split, 4b.5) is unchanged in
+rule: a node is char-level iff it classifies a single char —
+CharRange / NotChar / one-char String; Any iff all alts; Rule / Many
+iff child. Per ctor:
 
 | Ctor | Render |
 |---|---|
 | `CharRange` / `NotChar` | one-char parser (skip first, then pred); bodies are let-free and inline at use sites |
-| bare `String` | literal match, multi-char: `(str-prefix? S input)` + N `take-char`s (N=1 for one char); let-free, inlines at use sites |
+| bare `String` | literal match: `(str-prefix? S input)` + `(state/take-chars s n)` (the kit's n-char advance; literals contain no newlines, so the line counter is untouched); let-free, inlines at use sites |
 | `Any` | nested `parse-or` (site-(a)); anonymous alts lifted to index-path helpers; ≥2 bare-String alts collapse into ONE inlined grouped cond (the item-8 grouped-literal form — the inlined-cond codegen crash resolution stands); ALT ORDER IS SEMANTICS — the grammar's ordering (longest-literal-first, keyword-heads before catch-alls) is preserved verbatim |
 | `All` | nested `parse-then` (site-(c)); value = vector of its non-`Ignore` sub-values, UNLESS `Node`-wrapped |
 | `Many` | char-level child → fast path (`<name>-char` set-predicate defn + `read-run` wrapper, run as ONE string); otherwise slow path (lifted child + site-(b) acc-recursion loop, value = vector) |
 | `Rule` | module-level `(defn <name> [state] ...)`; in sub-position, a bare-name call |
 | `Ref` | a call to the named rule over the threaded state — self or mutual, uniformly |
 | `Concat` | parse the children in sequence, flatten-join their string values into ONE string (the value of the position) |
-| `Node` | the child's value vector becomes `(raw/<name> v0 ... vN (state/state-line s-entry))` — the vector is spread as ctor args; arity is the grammar's responsibility (Value-shape discipline) |
+| `Node` | the child's value becomes `(raw/<name> <args> (state/state-line s-entry))` — a string-shaped child contributes one arg, a vector-shaped child its arity many (spread); arity is the grammar's responsibility (Value-shape discipline) |
 | `Ignore` | `(parse-then (<ref> state) (fn [_ s2] <rest>))` — parse, discard the value, thread the state; contributes nothing to an enclosing `All`'s vector; produces no `ParserIgnore` (see the ctor-set section) |
-| `AlwaysSucceed` / `Error` | `(ParserMatch <v> state)` / `(ParserError MSG state)` |
+| `AlwaysSucceed` / `Error` | `(ParserMatch <v> state)` (String constants, via the `render-constant` protocol) / `(ParserError MSG state)` |
 
 **Module assembly.** Header (`add-ns` state + raw; the
 `parse-then` / `parse-or` kit; the parse-error kit), then

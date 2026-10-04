@@ -19,7 +19,7 @@ If you are told to create a file, then only create it. Do not try to execute it 
 
 * Before writing or editing any `.toc` file, read docs/toccata-style.md and follow it.
 
-* Structural edits to `.toc` files are made with the structural editing tool
+* All changes to toccata code (`.toc` files) are made with the structural editing tool
   (`tools/toc-edit/toc_edit.py`, run from the repo root; copy-paste examples in
   `tools/toc-edit/README.md`) — not by hand-editing node text. It performs
   whole-node span surgery (untouched bytes stay untouched) and is
@@ -30,10 +30,13 @@ If you are told to create a file, then only create it. Do not try to execute it 
   2. Find the target: `line <file> <n>` gives the innermost node on a line;
      `show <file> <path>` prints a node's path, kind, span, verbatim text, and
      child paths. Verify the shown text is what you expect before editing.
-  3. Edit with `insert` (splice a snippet at the node's start with `--before`
-     or its end with `--after`), `replace` (splice over the node's span), or
-     `delete` (remove the node's span). Snippet text goes in a file passed via
-     `--from-file`.
+  3. Before inserting any new snippet of toccata code, validate it: write
+     the snippet to its own file and run `check` on that file — only splice
+     a snippet that passes (exit 0; the missing-main abort is the normal
+     library-load path and is fine). Only then edit with `insert` (splice a
+     snippet at the node's start with `--before` or its end with `--after`),
+     `replace` (splice over the node's span), or `delete` (remove the node's
+     span). Snippet text goes in a file passed via `--from-file`.
   4. There is no in-form token editing: to change part of a form, `replace`
      the whole node with a snippet containing the full new text.
   5. `delete` leaves a preceding header comment behind (comments are
