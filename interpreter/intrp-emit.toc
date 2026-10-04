@@ -96,6 +96,25 @@
 (defp concat-fragment [child-ir vi]
   vi)
 
+;; node-value-args [child-ir v]: the ctor arg expressions (no auto-loc)
+;; for a Node whose child is child-ir and whose value is bound to
+;; variable v. A protocol (defp + one extend-type impl per supported
+;; ctor - the ir-value-shape pattern); the defp's body is the abort for
+;; the unsupported kinds. A "string"-shaped child contributes one arg
+;; (v); a "vector"-shaped child contributes its arity many args
+;; (extracted elements).
+(defp node-value-args [n v]
+  (abort (str "node-value-args: unsupported kind: " (type-name n))))
+
+;; vec-arg-exprs [v n]: n arg expressions extracting elements 0..n-1
+;; of the value vector bound to variable v: (extract (get v i)).
+(defn vec-arg-exprs [v n]
+  (cond (= n 0)
+    (vector)
+
+    (conj (vec-arg-exprs v (- n 1))
+          (str "(extract (get " v " " (- n 1) ")"))))
+
 ;; =====================================================================
 ;; Phase 2 - render (item 4b.1): the leaf ctors.
 ;;
@@ -203,7 +222,12 @@
     (cond (char-level (.parser n))
       "string"
 
-      "vector")))
+      "vector"))
+  (node-value-args [n v]
+    (cond (char-level (.parser n))
+      (vector v)
+
+      (abort (str "node-value-args: dynamic arity: " (type-name n))))))
 
 (extend-type grammar/All
   (char-level [n]
@@ -213,7 +237,9 @@
   (ir-value-arity [n]
     (-> (.parsers n)
         (filter not-ignore?)
-        count)))
+        count))
+  (node-value-args [n v]
+    (vec-arg-exprs v (-> (.parsers n) (filter not-ignore?) count))))
 
 (extend-type grammar/Any
   (char-level [n]
@@ -224,7 +250,9 @@
     (ir-value-shape (extract (get (.parsers n) 0))))
   (ir-value-arity [n]
     (either (map (first (.parsers n)) ir-value-arity)
-            0)))
+            0))
+  (node-value-args [n v]
+    (node-value-args (extract (get (.parsers n) 0)) v)))
 
 (extend-type grammar/Rule
   (char-level [n]
@@ -232,32 +260,9 @@
   (ir-value-shape [n]
     (ir-value-shape (.parser n)))
   (ir-value-arity [n]
-    (ir-value-arity (.parser n))))
-
-
-;; vec-arg-exprs [v n]: n arg expressions extracting elements 0..n-1
-;; of the value vector bound to variable v: (extract (get v i)).
-(defn vec-arg-exprs [v n]
-  (cond (= n 0)
-    (vector)
-
-    (conj (vec-arg-exprs v (- n 1))
-          (str "(extract (get " v " " (- n 1) ")"))))
-
-;; node-value-args [child-ir v]: the ctor arg expressions (no auto-loc)
-;; for a Node whose child is child-ir and whose value is bound to
-;; variable v. A "string"-shaped child contributes one arg (v); a
-;; "vector"-shaped child contributes its arity many args (extracted
-;; elements).
-(defn node-value-args [child-ir v]
-  (let [shape (ir-value-shape child-ir)]
-    (cond (str= shape "string")
-      (vector v)
-
-      (str= shape "vector")
-      (vec-arg-exprs v (ir-value-arity child-ir))
-
-      (abort (str "node-value-args: bad shape: " shape)))))
+    (ir-value-arity (.parser n)))
+  (node-value-args [n v]
+    (node-value-args (.parser n) v)))
 
 (extend-type grammar/CharRange
   (char-level [n]
@@ -272,7 +277,9 @@
           msg (render-literal (str "expected a character in the range " lo "-" hi))]
       (vector (str "(cond (and " (one-char-test C) " " (char-range-test lo hi C) ")"
                         " (state/ParserMatch " C " (state/take-char " SV "))"
-                        " (state/ParserError " msg " " SV "))")))))
+                        " (state/ParserError " msg " " SV "))"))))
+  (node-value-args [n v]
+    (vector v)))
 
 (extend-type grammar/NotChar
   (char-level [n]
@@ -287,7 +294,9 @@
       (vector (str "(cond (and " (one-char-test C) " (not (str= " C " " (render-literal ch) "))"
                         ")"
                         " (state/ParserMatch " C " (state/take-char " SV "))"
-                        " (state/ParserError " msg " " SV "))")))))
+                        " (state/ParserError " msg " " SV "))"))))
+  (node-value-args [n v]
+    (vector v)))
 
 ;; the bare-String literal leaf (mixed in among the ctor values in
 ;; Any / All).
@@ -309,7 +318,9 @@
   (value-shape [n]
     "string")
   (render-constant [n sv]
-    (str "(state/ParserMatch " (render-literal n) " " sv ")")))
+    (str "(state/ParserMatch " (render-literal n) " " sv ")"))
+  (node-value-args [n v]
+    (vector v)))
 
 ;; the AlwaysSucceed constant value (the unit) - a Vector.
 (extend-type Vector
@@ -334,7 +345,12 @@
     (value-shape (.value n)))
   (render-child [n sv]
     (let [v (.value n)]
-      (vector (render-constant v sv)))))
+      (vector (render-constant v sv))))
+  (node-value-args [n v]
+    (cond (str= (value-shape (.value n)) "string")
+      (vector v)
+
+      (abort (str "node-value-args: unsupported constant: " (type-name n))))))
 
 (extend-type grammar/Error
   (char-level [n]
@@ -386,18 +402,21 @@
                      (extract (get frags 0))
 
                      (str "(str " (to-str (interpose frags " ")) ")"))]
-      (concat-tail cs 0 sv vnames join)))))
+      (concat-tail cs 0 sv vnames join)))
+  (node-value-args [n v]
+    (vector v)))
+
+
 
 (extend-type grammar/Node
   (char-level [n]
     None)
   (render-child [n sv]
     (let [child (.parser n)
-          res (render-child child sv)]
+          res (render-child child sv)
+          line (str "(state/state-line (state/skip-whitespace " sv "))")
+          args (to-str (interpose (conj (node-value-args child "v") line) " "))
+          match (str "(raw/" (.name n) " " args ")")]
       (comp (butlast res)
             (vector (str "(parse-then " (extract (last res))
-                         " (fn [v s2] (state/ParserMatch (raw/" (.name n) " "
-                         (to-str (interpose (conj (node-value-args child "v")
-                                                  (str "(state/state-line (state/skip-whitespace " sv "))"))
-                                            " "))
-                         ") s2))))"))))))
+                         " (fn [v s2] (state/ParserMatch " match " s2)))"))))))
