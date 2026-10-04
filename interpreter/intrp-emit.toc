@@ -259,52 +259,6 @@
 
       (abort (str "node-value-args: bad shape: " shape)))))
 
-;; concat-fragments [cs vnames i]: the string fragments for children
-;; 0..i-1 (a Vector of String, in child order). Recurses i down to 0
-;; (conj appends to the end, so the forward 0->n order is preserved).
-(defn concat-fragments [cs vnames i]
-  (cond (= i 0)
-    (vector)
-
-    (conj (concat-fragments cs vnames (- i 1))
-          (concat-fragment (extract (get cs (- i 1))) (extract (get vnames (- i 1)))))))
-
-;; build-join [cs vnames]: the Toccata source of the Concat join over the
-;; value variables. Each child's value is a string fragment (the value
-;; var for string-shaped children, a flatten for vector-shaped children);
-;; the fragments are joined with (str ...).
-(defn build-join [cs vnames]
-  (let [n (count cs)]
-    (cond (= n 0)
-      "\"\""
-
-      (= n 1)
-      (concat-fragment (extract (get cs 0)) (extract (get vnames 0)))
-
-      (str "(str " (to-str (interpose (concat-fragments cs vnames (count cs)) " ")) ")"))))
-
-;; gen-vnames [n]: n value variable names ["v0" ... "v(n-1)"].
-(defn gen-vnames [n]
-  (cond (= n 0)
-    (vector)
-
-    (conj (gen-vnames (- n 1)) (str "v" (- n 1)))))
-
-
-;; concat-tail [cs i sv vnames join]: the source lines for Concat
-;; children i..n-1, threading the state. Returns a Vector of Strings:
-;; the children's helper lines, then ONE final line - the nested
-;; parse-then over sv (the base case is the final ParserMatch).
-(defn concat-tail [cs i sv vnames join]
-  (cond (= i (count cs))
-    (vector (str "(state/ParserMatch " join " " sv ")"))
-
-    (let [res (render-child (extract (get cs i)) sv)
-          snext (str "s" (+ i 1))
-          inner (concat-tail cs (+ i 1) snext vnames join)]
-      (comp (comp (butlast res) (butlast inner))
-            (vector (str "(parse-then " (extract (last res)) " (fn [" (extract (get vnames i)) " " snext "] " (extract (last inner)) ")"))))))
-
 (extend-type grammar/CharRange
   (char-level [n]
     (Some None))
@@ -398,6 +352,22 @@
   (not-ignore? [n]
     None))
 
+;; concat-tail [cs i sv vnames join]: the source lines for Concat
+;; children i..n-1, threading the state. Returns a Vector of Strings:
+;; the children's helper lines, then ONE final line - the nested
+;; parse-then over sv (the base case is the final ParserMatch).
+(defn concat-tail [cs i sv vnames join]
+  (cond (= i (count cs))
+    (vector (str "(state/ParserMatch " join " " sv ")"))
+
+    (let [res (render-child (extract (get cs i)) sv)
+          snext (str "s" (+ i 1))
+          inner (concat-tail cs (+ i 1) snext vnames join)]
+      (comp (comp (butlast res) (butlast inner))
+            (vector (str "(parse-then " (extract (last res))
+                         " (fn [" (extract (get vnames i)) " " snext "] "
+                         (extract (last inner)) ")"))))))
+
 (extend-type grammar/Concat
   (char-level [n]
     None)
@@ -405,8 +375,18 @@
     "string")
   (render-child [n sv]
     (let [cs (.parsers n)
-          vnames (gen-vnames (count cs))]
-      (concat-tail cs 0 sv vnames (build-join cs vnames)))))
+          vnames (map (range (count cs)) (fn [x] (str "v" x)))
+          frags (map (range (count cs))
+                     (fn [i] (concat-fragment (extract (get cs i))
+                                              (extract (get vnames i)))))
+          join (cond (= (count frags) 0)
+                     "\"\""
+
+                     (= (count frags) 1)
+                     (extract (get frags 0))
+
+                     (str "(str " (to-str (interpose frags " ")) ")"))]
+      (concat-tail cs 0 sv vnames join)))))
 
 (extend-type grammar/Node
   (char-level [n]
