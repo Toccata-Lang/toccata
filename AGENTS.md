@@ -33,10 +33,17 @@ If you are told to create a file, then only create it. Do not try to execute it 
   3. Before inserting any new snippet of toccata code, validate it: write
      the snippet to its own file and run `check` on that file — only splice
      a snippet that passes (exit 0; the missing-main abort is the normal
-     library-load path and is fine). Only then edit with `insert` (splice a
-     snippet at the node's start with `--before` or its end with `--after`),
-     `replace` (splice over the node's span), or `delete` (remove the node's
-     span). Snippet text goes in a file passed via `--from-file`.
+     library-load path and is fine). A SELF-CONTAINED snippet (no
+     references to bindings of the enclosing scope) must pass this
+     standalone `check`. A CONTEXT-DEPENDENT snippet (references variables
+     bound in the enclosing `fn`/`let`) can never pass standalone — it is
+     gated by the tool's whole-candidate validation instead (new-toc plus
+     the leftover-bytes coverage gate run on the full candidate file by
+     `insert`/`replace`); a failure there is a normal rejection (exit 3).
+     Only then edit with `insert` (splice a snippet at the node's start
+     with `--before` or its end with `--after`), `replace` (splice over the
+     node's span), or `delete` (remove the node's span). Snippet text goes
+     in a file passed via `--from-file`.
   4. There is no in-form token editing: to change part of a form, `replace`
      the whole node with a snippet containing the full new text.
   5. `delete` leaves a preceding header comment behind (comments are
@@ -79,9 +86,11 @@ If you are told to create a file, then only create it. Do not try to execute it 
 * Core-API gotchas that produced three consecutive bogus
   "toolchain crash" diagnoses on 2026-09-26 — CHECK THESE BEFORE
   blaming new-toc: (1) `get` on a Vector returns a MAYBE (`Some
-  element` / `None`), not the bare element — use `(extract (get v
-  i))`; a raw Maybe compared to a bare value is silently `no`/false,
-  and `type-name` printing `Some` is CORRECT, not corruption. (2)
+  element` / `None`), not the bare element — never `extract` it; use
+  the element by branching on the Maybe (`(either (map (get v i)
+  (fn [x] …)) default)` — see docs/toccata-style.md, Core API); a raw
+  Maybe compared to a bare value is silently `no`/false, and
+  `type-name` printing `Some` is CORRECT, not corruption. (2)
   `+` takes EXACTLY 2 args — `(+ a b c)` is invalid source and
   makes new-toc abort (silently, or with `Wrong number of args for
   '+'`). Both are in docs/toccata-style.md (Core API); read that

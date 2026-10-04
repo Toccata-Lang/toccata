@@ -170,30 +170,38 @@ Lessons drawn from the parser emitter's IR deletion
 
 * `+` is exactly 2-arg — nest to combine more: `(+ a (+ b c))`.
 
-* `first` on a Vector returns `Some element`, not the bare element — extract
-  with `(extract (first v))`. `rest` returns a Vector.
+* `first` on a Vector returns `Some element`, not the bare element — use
+  the element by branching on the Maybe (the idiom below); never
+  `extract` it. `rest` returns a Vector.
 
 * `get` on a Vector returns a Maybe — `Some element` on a hit, `None` on a
-  miss — not the bare element. Compare or use the element via `(extract
-  (get v i))` (same contract as `first`). Comparing the raw result to a
+  miss — not the bare element. Comparing the raw result to a
   bare value (`(= (get [1 2] 0) 1)`) is silently false, not an error.
+  Use the element by branching on the Maybe; never `extract` it.
 
 * `extract` aborts the program on `None` (`*** The 'nothing' value can not
-  be passed to 'extract'.`) — it is the unwrap idiom, not a safe accessor.
-  Use `(extract (get v i))` / `(extract (first v))` only where the index
-  is in range by construction (static arity, checked loop bound). Handling
-  a possible miss requires branching on the Maybe (until `match` lands).
+  be passed to 'extract'.`). It must NEVER be applied to a Maybe value —
+  the failure case must be handled explicitly: branch on the Maybe
+  (`(either (map (first v) (fn [x] …)) default)`, until `match` lands),
+  and where the miss is a genuine error make the default an explicit
+  `(abort …)` with a clear message. `Some`/`extract` will be deleted from
+  the language to enforce this — do not introduce new uses.
 
-* Structure around the Maybe, don't count around it: no `(count v)`-
-  then-branch-then-`(extract (get v i))` case analysis. Let `(first v)` /
-  `(get v i)` carry the information — `None` IS the miss case (the
-  `either` default), `Some x` is the hit, and cardinality questions are
-  asked of the data in hand (`(empty? (rest v))`). The idiom:
-  `(either (map (first v) (fn [x] …)) default)`.
+* Structure around the Maybe — don't count around it, don't `extract`
+  around it: no `(count v)`-then-branch-then-`(extract (get v i))` case
+  analysis, and no `(extract (first v))` on a container the type does not
+  guarantee is non-empty ("all current callers pass non-empty" is NOT a
+  construction guarantee — a deftype ctor can hold an empty vector). Let
+  `(first v)` / `(get v i)` carry the information — `None` IS the miss
+  case (the `either` default), `Some x` is the hit, and cardinality
+  questions are asked of the data in hand (`(empty? (rest v))`). The
+  idiom: `(either (map (first v) (fn [x] …)) default)`; when the miss is
+  a genuine error, the default is an explicit `(abort …)` with a clear
+  message, not an `extract` failure.
 
 * Bind, don't re-look-up: when mapping over a Maybe (or a collection), use
   the value bound in the `fn` inside the branch — do not make a second
-  `get`/`first` + `extract` that must re-assert the same index invariant.
+  `get`/`first` lookup that must re-assert the same index invariant.
 
 * `reduce` is a left fold: `(reduce coll init f)` applies `(f acc elem)` per
   element and returns `init` for an empty collection. `reverse`, `last`, and
