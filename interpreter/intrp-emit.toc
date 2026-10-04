@@ -4,8 +4,8 @@
 ;; emits a recursive-descent parser module in Toccata source for it
 ;; (docs/parser-generator-plan.md).
 ;;
-;; No intermediate IR: the emit protocols (char-level, ir-value-shape,
-;; ir-value-arity, render-child) are extended directly onto the
+;; No intermediate IR: the emit protocols (char-level, render-child)
+;; are extended directly onto the
 ;; ParserCombinator ctor types (and String, for the bare-literal leaf)
 ;; - the v1 EBNF emitter's pattern (intrp-ebnf.toc). The render phase
 ;; recurses over the grammar tree via render-child; there is no
@@ -26,41 +26,6 @@
 ;; (a reduce); Rule / Many delegate to their child; All / Ref / Node /
 ;; Concat / Ignore / AlwaysSucceed / Error are never.
 (defp char-level [n])
-
-;; --- value-shape helpers (for Concat's join and Node's spread) -------
-
-;; ir-value-shape [ir]: "string" iff the position's value is a single
-;; String; "vector" iff it is a Vector of strings. Structural (the
-;; grammar tree),
-;; per the value-shape discipline (every alt of an Any feeding a shared
-;; position yields the same shape). A protocol (defp + one extend-type
-;; impl per supported ctor - the char-level pattern); the defp's body is
-;; the abort for the unsupported kinds.
-;;   - char-level leaves (CharRange / NotChar / Str) and Concat
-;;     -> "string"
-;;   - Many -> "string" iff char-level (fast path, one run string),
-;;     else "vector" (slow path, vector of child values)
-;;   - All -> "vector" (vector of non-Ignore sub-values)
-;;   - Any / Rule -> the first-alt / child's shape
-;;   - AlwaysSucceed -> the constant's type (String -> "string",
-;;     Vector -> "vector")
-;;   - Ref / Node / Ignore / Error -> the default abort (Ref needs the
-;;     rule set, supplied at module assembly 4c.2; the rest are not
-;;     value sources in scope (a))
-(defp ir-value-shape [n]
-  (abort (str "ir-value-shape: unsupported kind: " (type-name n))))
-
-;; ir-value-arity [ir]: the static arity of a "vector"-shaped value (the
-;; number of ctor args a Node spreads it into). Only meaningful when
-;; ir-value-shape is "vector". A protocol (defp + one extend-type impl
-;; per supported ctor - the ir-value-shape pattern); the defp's body is
-;; the abort for the unsupported kinds.
-;;   - All -> the count of non-Ignore children
-;;   - Any / Rule -> the first-alt / child's arity
-;;   - Many (slow) / the rest -> the default abort (dynamic arity - not
-;;     spreadable; not in scope (a))
-(defp ir-value-arity [n]
-  (abort (str "ir-value-arity: unsupported kind: " (type-name n))))
 
 ;; render-child [ir sv]: the render dispatch - the source lines for ir
 ;; over the state variable sv. A protocol (defp + one extend-type impl
@@ -99,7 +64,7 @@
 ;; node-value-args [child-ir v]: the ctor arg expressions (no auto-loc)
 ;; for a Node whose child is child-ir and whose value is bound to
 ;; variable v. A protocol (defp + one extend-type impl per supported
-;; ctor - the ir-value-shape pattern); the defp's body is the abort for
+;; ctor - the char-level pattern); the defp's body is the abort for
 ;; the unsupported kinds. A "string"-shaped child contributes one arg
 ;; (v); a "vector"-shaped child contributes its arity many args
 ;; (extracted elements).
@@ -218,11 +183,6 @@
 (extend-type grammar/Many
   (char-level [n]
     (char-level (.parser n)))
-  (ir-value-shape [n]
-    (cond (char-level (.parser n))
-      "string"
-
-      "vector"))
   (node-value-args [n v]
     (cond (char-level (.parser n))
       (vector v)
@@ -232,12 +192,6 @@
 (extend-type grammar/All
   (char-level [n]
     None)
-  (ir-value-shape [n]
-    "vector")
-  (ir-value-arity [n]
-    (-> (.parsers n)
-        (filter not-ignore?)
-        count))
   (node-value-args [n v]
     (vec-arg-exprs v (-> (.parsers n) (filter not-ignore?) count))))
 
@@ -246,29 +200,18 @@
     (reduce (.parsers n) (Some None)
             (fn [acc a]
               (and acc (char-level a)))))
-  (ir-value-shape [n]
-    (ir-value-shape (extract (get (.parsers n) 0))))
-  (ir-value-arity [n]
-    (either (map (first (.parsers n)) ir-value-arity)
-            0))
   (node-value-args [n v]
     (node-value-args (extract (get (.parsers n) 0)) v)))
 
 (extend-type grammar/Rule
   (char-level [n]
     (char-level (.parser n)))
-  (ir-value-shape [n]
-    (ir-value-shape (.parser n)))
-  (ir-value-arity [n]
-    (ir-value-arity (.parser n)))
   (node-value-args [n v]
     (node-value-args (.parser n) v)))
 
 (extend-type grammar/CharRange
   (char-level [n]
     (Some None))
-  (ir-value-shape [n]
-    "string")
   (render-child [n sv]
     (let [lo (.lower n)
           hi (.upper n)
@@ -284,8 +227,6 @@
 (extend-type grammar/NotChar
   (char-level [n]
     (Some None))
-  (ir-value-shape [n]
-    "string")
   (render-child [n sv]
     (let [ch (.char n)
           SV (skip-expr sv)
@@ -306,8 +247,6 @@
       (Some None)
 
       None))
-  (ir-value-shape [n]
-    "string")
   (render-child [n sv]
     (let [SV (skip-expr sv)
           L (render-literal n)
@@ -341,8 +280,6 @@
 (extend-type grammar/AlwaysSucceed
   (char-level [n]
     None)
-  (ir-value-shape [n]
-    (value-shape (.value n)))
   (render-child [n sv]
     (let [v (.value n)]
       (vector (render-constant v sv))))
@@ -387,8 +324,6 @@
 (extend-type grammar/Concat
   (char-level [n]
     None)
-  (ir-value-shape [n]
-    "string")
   (render-child [n sv]
     (let [cs (.parsers n)
           vnames (map (range (count cs)) (fn [x] (str "v" x)))
