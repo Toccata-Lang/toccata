@@ -6,6 +6,45 @@ Temporary new-toc build workarounds are NOT here; they live in
 `docs/new-compiler-plan.md` (Verified facts) and expire when the new compiler
 builds the code.
 
+## Design
+
+Lessons drawn from the parser emitter's IR deletion
+(`interpreter/intrp-emit.toc`, 668 → 296 lines with more capability):
+
+* Dispatch on the data you have. If a protocol can be extended directly onto
+  the existing types (including types imported from other modules), do not
+  first copy the data into a parallel deftype IR and dispatch on the copy. An
+  intermediate representation is only justified when it actually transforms
+  the shape.
+
+* Never dispatch on `type-name` string conds —
+  `(cond (str= (type-name v) "Foo") ...)` duplicates the type system and
+  breaks silently on rename. Write a `defp` with one `extend-type` impl per
+  ctor (see Dispatch).
+
+* Inline one-use helpers: a `defn` with exactly one caller gets its body at
+  the call site (or in the `extend-type` impl). Keep a named helper only when
+  it is used more than once or is genuinely recursive.
+
+* Let the core library do the walking: `map` / `to-str` / `interpose` /
+  `range` over `(vec s)`, not hand-rolled recursion over `subs`.
+
+* "Everything except X" is a defaulting predicate protocol, not a type check
+  inlined in a `reduce`: a `defp` whose body is the default (e.g. `(Some v)`)
+  with a single impl for the exceptional type, used with `filter`.
+
+* Field getters are protocol-dispatched on the value's ctor — shared field
+  names across ctors (`.parsers` on three different ctors) are fine. Do not
+  rename fields for build-wide uniqueness.
+
+* Delete dead machinery in the same change that orphans it — dead protocol
+  impls especially, since they read as maintained API.
+
+* new-toc-specific hazards met while building the emitter (a defn-dispatch
+  handler miscompiling under `fold`, `!` annotations on multi-field ctors,
+  a bare `def` after a `defp`) are temporary workarounds — see
+  `docs/new-compiler-plan.md` (Verified facts).
+
 ## Forms
 
 * Top-level forms are prefix forms: `(keyword ...)` with the keyword as the
