@@ -4,14 +4,13 @@
 ;; emits a recursive-descent parser module in Toccata source for it
 ;; (docs/parser-generator-plan.md).
 ;;
-;; No intermediate IR: the emit protocols (char-level, render-child)
-;; are extended directly onto the
-;; ParserCombinator ctor types (and String, for the bare-literal leaf)
-;; - the v1 EBNF emitter's pattern (intrp-ebnf.toc). The render phase
-;; recurses over the grammar tree via render-child; there is no
-;; separate analyze/fold pass. Bare String literals are first-class
-;; grammar leaves (mixed in among the ctor values in Any / All), so
-;; String carries the literal impls.
+;; No intermediate IR: the emit protocol (render-child) is extended
+;; directly onto the ParserCombinator ctor types (and String, for the
+;; bare-literal leaf) - the v1 EBNF emitter's pattern (intrp-ebnf.toc).
+;; The render phase recurses over the grammar tree via render-child;
+;; there is no separate analyze/fold pass. Bare String literals are
+;; first-class grammar leaves (mixed in among the ctor values in
+;; Any / All), so String carries the literal impls.
 ;;
 ;; The grammar's field names are shared across ctors (.parsers on
 ;; All / Any / Concat, .name on Rule / Ref / Node, .parser on
@@ -20,16 +19,9 @@
 
 (add-ns grammar (module "intrp-grammar.toc"))
 
-;; char-level [n]: Some None iff the ParserCombinator n classifies a
-;; single char. CharRange / NotChar are always char-level; a bare
-;; String literal iff it is one char; Any iff every alt is char-level
-;; (a reduce); Rule / Many delegate to their child; All / Ref / Node /
-;; Concat / Ignore / AlwaysSucceed / Error are never.
-(defp char-level [n])
-
 ;; render-child [ir sv]: the render dispatch - the source lines for ir
 ;; over the state variable sv. A protocol (defp + one extend-type impl
-;; per rendered ctor - the char-level pattern); the defp's body is the
+;; per rendered ctor - the protocol pattern); the defp's body is the
 ;; abort for the unrendered ctors. The leaf ctors (4b.1) and the
 ;; wrapper ctors (4b.2) have impls; the remaining ctors (Any / All /
 ;; Many / Rule) are the later items (4b.3-4b.7).
@@ -41,12 +33,6 @@
 ;; children. A protocol with a default so only Ignore needs an impl.
 (defp not-ignore? [v]
   (Some v))
-
-;; value-shape [v]: "string" / "vector" for a raw AlwaysSucceed value
-;; (a String or a Vector) - the shape that value contributes. A
-;; protocol; the defp's body is the abort for unsupported value types.
-(defp value-shape [v]
-  (abort (str "value-shape: unsupported value type: " (type-name v))))
 
 ;; render-constant [v sv]: the source for an AlwaysSucceed constant
 ;; value over the state variable sv - a String literal or the empty
@@ -64,7 +50,7 @@
 ;; node-value-args [child-ir v]: the ctor arg expressions (no auto-loc)
 ;; for a Node whose child is child-ir and whose value is bound to
 ;; variable v. A protocol (defp + one extend-type impl per supported
-;; ctor - the char-level pattern); the defp's body is the abort for
+;; ctor - the protocol pattern); the defp's body is the abort for
 ;; the unsupported kinds. A "string"-shaped child contributes one arg
 ;; (v); a "vector"-shaped child contributes its arity many args
 ;; (extracted elements).
@@ -180,38 +166,19 @@
 ;; The wrapper render-child impls are inlined in the extend-type
 ;; blocks below; this section holds their helper defns.
 
-(extend-type grammar/Many
-  (char-level [n]
-    (char-level (.parser n)))
-  (node-value-args [n v]
-    (cond (char-level (.parser n))
-      (vector v)
-
-      (abort (str "node-value-args: dynamic arity: " (type-name n))))))
-
 (extend-type grammar/All
-  (char-level [n]
-    None)
   (node-value-args [n v]
     (vec-arg-exprs v (-> (.parsers n) (filter not-ignore?) count))))
 
 (extend-type grammar/Any
-  (char-level [n]
-    (reduce (.parsers n) (Some None)
-            (fn [acc a]
-              (and acc (char-level a)))))
   (node-value-args [n v]
     (node-value-args (extract (get (.parsers n) 0)) v)))
 
 (extend-type grammar/Rule
-  (char-level [n]
-    (char-level (.parser n)))
   (node-value-args [n v]
     (node-value-args (.parser n) v)))
 
 (extend-type grammar/CharRange
-  (char-level [n]
-    (Some None))
   (render-child [n sv]
     (let [lo (.lower n)
           hi (.upper n)
@@ -225,8 +192,6 @@
     (vector v)))
 
 (extend-type grammar/NotChar
-  (char-level [n]
-    (Some None))
   (render-child [n sv]
     (let [ch (.char n)
           SV (skip-expr sv)
@@ -242,11 +207,6 @@
 ;; the bare-String literal leaf (mixed in among the ctor values in
 ;; Any / All).
 (extend-type String
-  (char-level [n]
-    (cond (= (count n) 1)
-      (Some None)
-
-      None))
   (render-child [n sv]
     (let [SV (skip-expr sv)
           L (render-literal n)
@@ -254,8 +214,6 @@
       (vector (str "(cond (str-prefix? " L " (.input " SV "))"
                         " (state/ParserMatch " L " " (take-chars (count n) SV) ")"
                         " (state/ParserError " msg " " SV "))"))))
-  (value-shape [n]
-    "string")
   (render-constant [n sv]
     (str "(state/ParserMatch " (render-literal n) " " sv ")"))
   (node-value-args [n v]
@@ -263,8 +221,6 @@
 
 ;; the AlwaysSucceed constant value (the unit) - a Vector.
 (extend-type Vector
-  (value-shape [n]
-    "vector")
   (render-constant [n sv]
     (cond (= (count n) 0)
       (str "(state/ParserMatch empty-vector " sv ")")
@@ -272,32 +228,19 @@
       (abort "render-constant: unsupported non-empty vector value"))))
 
 (extend-type grammar/Ref
-  (char-level [n]
-    None)
   (render-child [n sv]
     (vector (str "(" (.name n) " " sv ")"))))
 
 (extend-type grammar/AlwaysSucceed
-  (char-level [n]
-    None)
   (render-child [n sv]
     (let [v (.value n)]
-      (vector (render-constant v sv))))
-  (node-value-args [n v]
-    (cond (str= (value-shape (.value n)) "string")
-      (vector v)
-
-      (abort (str "node-value-args: unsupported constant: " (type-name n))))))
+      (vector (render-constant v sv)))))
 
 (extend-type grammar/Error
-  (char-level [n]
-    None)
   (render-child [n sv]
     (vector (str "(state/ParserError " (render-literal (.msg n)) " " sv ")"))))
 
 (extend-type grammar/Ignore
-  (char-level [n]
-    None)
   (render-child [n sv]
     (let [res (render-child (.parser n) sv)]
       (comp (butlast res)
@@ -322,8 +265,6 @@
                          (extract (last inner)) ")"))))))
 
 (extend-type grammar/Concat
-  (char-level [n]
-    None)
   (render-child [n sv]
     (let [cs (.parsers n)
           vnames (map (range (count cs)) (fn [x] (str "v" x)))
@@ -344,8 +285,6 @@
 
 
 (extend-type grammar/Node
-  (char-level [n]
-    None)
   (render-child [n sv]
     (let [child (.parser n)
           res (render-child child sv)
