@@ -41,12 +41,6 @@
 (defp render-constant [v sv]
   (abort (str "render-constant: unsupported value type: " (type-name v))))
 
-;; concat-fragment [child-ir vi]: the string fragment for a Concat child
-;; whose value is bound to variable vi. A "string" value is used as-is;
-;; a "vector" value is flatten-joined to one string.
-(defp concat-fragment [child-ir vi]
-  vi)
-
 ;; node-value-args [child-ir v]: the ctor arg expressions (no auto-loc)
 ;; for a Node whose child is child-ir and whose value is bound to
 ;; variable v. A protocol (defp + one extend-type impl per supported
@@ -56,11 +50,6 @@
 ;; (extracted elements).
 (defp node-value-args [n v]
   (abort (str "node-value-args: unsupported kind: " (type-name n))))
-
-;; vec-arg-exprs [v n]: n arg expressions extracting elements 0..n-1
-;; of the value vector bound to variable v: (extract (get v i)).
-(defn vec-arg-exprs [v n]
-  (map (range n) (fn [i] (str "(extract (get " v " " i ")"))))
 
 ;; =====================================================================
 ;; Phase 2 - render (item 4b.1): the leaf ctors.
@@ -127,11 +116,6 @@
 (defn one-char-test [c]
   (str "(not (str= " c " \"\"))"))
 
-;; char-range-test [lo hi c]: the range pred over one-char string c.
-(defn char-range-test [lo hi c]
-  (str "(and (<= (char-code " (render-literal lo) ") (char-code " c "))"
-            " (<= (char-code " c ") (char-code " (render-literal hi) ")))" ))
-
 ;; =====================================================================
 ;; Phase 2 - render (item 4b.2): the wrapper ctors.
 ;;
@@ -158,7 +142,8 @@
 
 (extend-type grammar/All
   (node-value-args [n v]
-    (vec-arg-exprs v (-> (.parsers n) (filter not-ignore?) count))))
+    (map (range (-> (.parsers n) (filter not-ignore?) count))
+         (fn [i] (str "(extract (get " v " " i ")"))))))
 
 (extend-type grammar/Any
   (node-value-args [n v]
@@ -175,9 +160,12 @@
           SV (skip-expr sv)
           C (str "(subs " SV " 0 1)")
           msg (render-literal (str "expected a character in the range " lo "-" hi))]
-      (vector (str "(cond (and " (one-char-test C) " " (char-range-test lo hi C) ")"
-                        " (state/ParserMatch " C " (state/take-char " SV "))"
-                        " (state/ParserError " msg " " SV "))"))))
+      (vector (str "(cond (and " (one-char-test C)
+                    " (and (<= (char-code " (render-literal lo) ") (char-code " C "))"
+                    " (<= (char-code " C ") (char-code " (render-literal hi) ")))"
+                    ")"
+                    " (state/ParserMatch " C " (state/take-char " SV "))"
+                    " (state/ParserError " msg " " SV "))"))))
   (node-value-args [n v]
     (vector v)))
 
@@ -258,29 +246,25 @@
   (render-child [n sv]
     (let [cs (.parsers n)
           vnames (map (range (count cs)) (fn [x] (str "v" x)))
-          frags (map (range (count cs))
-                     (fn [i] (concat-fragment (extract (get cs i))
-                                              (extract (get vnames i)))))
-          join (cond (= (count frags) 0)
+          join (cond (= (count vnames) 0)
                      "\"\""
 
-                     (= (count frags) 1)
-                     (extract (get frags 0))
+                     (= (count vnames) 1)
+                     (extract (get vnames 0))
 
-                     (str "(str " (to-str (interpose frags " ")) ")"))]
+                     (str "(str " (to-str (interpose vnames " ")) ")"))]
       (concat-tail cs 0 sv vnames join)))
   (node-value-args [n v]
     (vector v)))
-
-
 
 (extend-type grammar/Node
   (render-child [n sv]
     (let [child (.parser n)
           res (render-child child sv)
-          line (str "(state/state-line " (skip-expr sv) ")")
-          args (to-str (interpose (conj (node-value-args child "v") line) " "))
+          args (to-str (interpose (conj (node-value-args child "v")
+                                        (str "(state/state-line " (skip-expr sv) ")")) " "))
           match (str "(raw/" (.name n) " " args ")")]
       (comp (butlast res)
             (vector (str "(parse-then " (extract (last res))
                          " (fn [v s2] (state/ParserMatch " match " s2)))"))))))
+
