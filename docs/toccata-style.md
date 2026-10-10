@@ -29,6 +29,14 @@ Lessons drawn from the parser emitter's IR deletion
 * Let the core library do the walking: `map` / `to-str` / `interpose` /
   `range` over `(vec s)`, not hand-rolled recursion over `subs`.
 
+* Do not write explicit recursion (a `defn` that calls itself, directly or
+  through a helper). Use a recursion scheme (`fold` / `unfold`) or a core
+  combinator (`reduce`, `map`, ...) instead. If a hand-rolled recursive
+  `defn` genuinely seems the only way, stop and ask for permission first —
+  do not introduce one unless the owner explicitly says ok. Try the other
+  routes (recursion schemes, restructuring the data, a protocol) before
+  asking.
+
 * "Everything except X" is a defaulting predicate protocol, not a type check
   inlined in a `reduce`: a `defp` whose body is the default (e.g. `(Some v)`)
   with a single impl for the exceptional type, used with `filter`.

@@ -34,6 +34,13 @@
 (defp not-ignore? [v]
   (Some v))
 
+;; concat-fragment [n vname]: the join fragment for a Concat child n
+;; whose value is bound to vname - the vname as-is for a string-shaped
+;; child; the flatten-join for a vector-shaped child (Many). A protocol
+;; with a default so only Many needs an impl.
+(defp concat-fragment [n vname]
+  vname)
+
 ;; render-constant [v sv]: the source for an AlwaysSucceed constant
 ;; value over the state variable sv - a String literal or the empty
 ;; vector, as a ParserMatch. A protocol; the defp's body is the abort
@@ -133,7 +140,35 @@
 ;; The wrapper render-child impls are inlined in the extend-type
 ;; blocks below; this section holds their helper defns.
 
+;; all-tail [cs i sv valnames]: the source lines for All children
+;; i..n-1, threading the state. Returns a Vector of Strings: the
+;; children's helper lines, then ONE final line - the nested
+;; parse-then over sv (the base case is the ParserMatch of the
+;; non-Ignore value vector, or empty-vector when every child is
+;; ignored). An Ignore child's fn param is _ and it contributes
+;; nothing to valnames; a non-Ignore child binds v<i> and appends it.
+;; A Many child's vector stays a single element of the value vector
+;; (All never collapses).
+(defn all-tail [cs i sv valnames]
+  (either (map (first cs)
+               (fn [c]
+                 (let [res (render-child c sv)
+                       snext (str "s" (+ i 1))
+                       param (either (not-ignore? c) (str "v" i) "_")
+                       vals (either (not-ignore? c) (conj valnames (str "v" i)) valnames)]
+                   (let [inner (all-tail (rest cs) (+ i 1) snext vals)]
+                     (comp (comp (butlast res) (butlast inner))
+                           (vector (str "(parse-then " (either (last res) (abort "all-tail: render-child returned no lines"))
+                                      " (fn [" param " " snext "] "
+                                      (either (last inner) (abort "all-tail: recursive render returned no lines")) ")")))))))
+               (vector (str "(state/ParserMatch "
+                            (either (first valnames)
+                                    (str "(vector " (to-str (interpose valnames " ")) ")")
+                                    "empty-vector")
+                            " " sv ")"))))
 (extend-type grammar/All
+  (render-child [n sv]
+    (all-tail (.parsers n) 0 sv empty-vector))
   (node-value-args [n v]
     (map (range (-> (.parsers n) (filter not-ignore?) count))
          (fn [i] (str "(extract (get " v " " i ")")))))
@@ -235,19 +270,40 @@
                                       (either (last inner) (abort "concat-tail: recursive render returned no lines")) ")"))))))
                (vector (str "(state/ParserMatch " join " " sv ")"))))
 
+;; concat-frags [cs vnames]: the per-child join fragments for a
+;; Concat, in child order - each child's fragment via the
+;; concat-fragment protocol (string-shaped: the vname as-is; Many:
+;; the flatten-join).
+(defn concat-frags [cs vnames]
+  (either (map (first cs)
+               (fn [c]
+                 (either (map (first vnames)
+                              (fn [vn]
+                                (comp (concat-frags (rest cs) (rest vnames))
+                                      (vector (concat-fragment c vn)))))
+                         (abort "concat-frags: vnames out of step"))))
+          (vector)))
+
 (extend-type grammar/Concat
   (render-child [n sv]
     (let [cs (.parsers n)
           vnames (map (range (count cs)) (fn [x] (str "v" x)))
-          join (either (map (first vnames)
-                            (fn [vname]
-                              (cond (empty? (rest vnames))
-                                    vname
-                                    (str "(str " (to-str (interpose vnames " ")) ")"))))
+          frags (concat-frags cs vnames)
+          join (either (first frags)
+                       (fn [f]
+                         (cond (empty? (rest frags))
+                               f
+                               (str "(str " (to-str (interpose frags " ")) ")")))
                        "\"\"")]
       (concat-tail cs 0 sv vnames join)))
   (node-value-args [n v]
     (vector v)))
+
+;; Many: vector-shaped value - the flatten-join fragment for Concat
+;; (the run's elements spliced into the one string).
+(extend-type grammar/Many
+  (concat-fragment [n vname]
+    (str "(reduce " vname " \"\" (fn [acc s] (str acc s)))")))
 
 (extend-type grammar/Node
   (render-child [n sv]
