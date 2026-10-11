@@ -1509,7 +1509,7 @@ Value *strVec(Value *arg0) {
     ReifiedVal *rv = malloc_reified(3);
     rv->type = SubStringType;
     rv->impls[0] = (Term)s;
-    rv->impls[1] = newI60(i);
+    rv->impls[1] = newI60(start + i);
     rv->impls[2] = newI60(1);
     __atomic_store(&rv->refs, &refsInit, __ATOMIC_RELAXED);
     result = mutateVectConj(result, termVal((Term)rv));
