@@ -465,6 +465,22 @@ def cmd_check(args):
     sys.exit(0)
 
 
+def cmd_parse(args):
+    """`parse`: verify the file is made of correctly structured s-expressions,
+    independent of whether new-toc compiles it. Runs ast-json (the parser)
+    and the coverage gate: exit 0 if the dump succeeds and accounts for
+    every non-whitespace byte, 1 otherwise (ast-json's failure message,
+    or the leftover-bytes message, on stderr). new-toc is NOT run.
+    """
+    ast = run_ast_json(args.file)  # clean error (exit 1) if parsing fails
+    raw = Path(args.file).read_bytes()
+    leftovers = leftover_bytes(raw, ast)
+    if leftovers:
+        sys.stderr.write(_leftover_message(args.file, raw, leftovers))
+        sys.exit(1)
+    sys.exit(0)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="toc_edit.py",
@@ -475,6 +491,14 @@ def build_parser():
     p = sub.add_parser("check")
     p.add_argument("file")
     p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser(
+        "parse",
+        help="check s-expression structure only (ast-json + coverage gate; "
+        "no new-toc compile)",
+    )
+    p.add_argument("file")
+    p.set_defaults(func=cmd_parse)
 
     p = sub.add_parser("show")
     p.add_argument("file")

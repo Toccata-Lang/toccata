@@ -235,6 +235,10 @@ Lessons drawn from the parser emitter's IR deletion
 * Keep a hash map's keys a single type — a `get` with a differently-typed key
   will miss.
 
+* `map` is a protocol, and its argument order differs from Clojure's: the
+  value or collection being mapped over comes first and the function second:
+  `(map v (fn [x] …))`.
+
 * Named / namespace-qualified functions are first-class values — passable as
   arguments, callable as `(f x)`.
 

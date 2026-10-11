@@ -31,15 +31,15 @@ If you are told to create a file, then only create it. Do not try to execute it 
      `show <file> <path>` prints a node's path, kind, span, verbatim text, and
      child paths. Verify the shown text is what you expect before editing.
   3. Before inserting any new snippet of toccata code, validate it: write
-     the snippet to its own file and run `check` on that file — only splice
-     a snippet that passes (exit 0; the missing-main abort is the normal
-     library-load path and is fine). A SELF-CONTAINED snippet (no
-     references to bindings of the enclosing scope) must pass this
-     standalone `check`. A CONTEXT-DEPENDENT snippet (references variables
-     bound in the enclosing `fn`/`let`) can never pass standalone — it is
-     gated by the tool's whole-candidate validation instead (new-toc plus
-     the leftover-bytes coverage gate run on the full candidate file by
-     `insert`/`replace`); a failure there is a normal rejection (exit 3).
+     the snippet to its own file and run `parse` on that file — only splice
+     a snippet that passes (exit 0). `parse` checks s-expression structure
+     only (ast-json plus the leftover-bytes coverage gate; no new-toc
+     compile), so it works for ANY snippet, whether self-contained or
+     context-dependent. A CONTEXT-DEPENDENT snippet (references variables
+     bound in the enclosing `fn`/`let`) is additionally gated by the tool's
+     whole-candidate validation (new-toc plus the leftover-bytes coverage
+     gate run on the full candidate file by `insert`/`replace`); a failure
+     there is a normal rejection (exit 3).
      Only then edit with `insert` (splice a snippet at the node's start
      with `--before` or its end with `--after`), `replace` (splice over the
      node's span), or `delete` (remove the node's span). Snippet text goes
