@@ -51,9 +51,11 @@ TBD).
 - `interpreter/intrp-emit.toc` — the emitter, rewritten IN PLACE for
   v3 (clean slate; v1/v2 source stays in git history). Library, no
   main.
-- `interpreter/intrp-state.toc` — NEW: the helper kit (state /
-  results / token) extracted from `interpreter/intrp-rdr.toc`.
-  Library, no main.
+- `interpreter/intrp-state_toc` — NEW: the helper kit (state/
+    results / tokens) + result-discrimination kit (`parse-then` /
+    `parse-or`, moved in from the generated header by side quest
+    SQ-1, 2026-1016), extracted from `interpreter/intrp-rdr.toc`.
+    Library, no main.
 - `interpreter/intrp-raw-ast.toc` — NEW: the raw AST deftypes.
   Library, no main. `interpreter/intrp-ast.toc` (the compiler plan's
   desugared AST) is UNTOUCHED.
@@ -332,9 +334,9 @@ to the parent value (state is threaded); `Error` → `ParserError`.
 (add-ns state (module "intrp-state.toc"))
 (add-ns raw (module "intrp-raw-ast.toc"))
 
-;; the parse-then / parse-or kit (Result discrimination, below)
 ;; the parse-error kit (parse-error-msg / parse-error-state /
-;;   parse-error-line — file:line: msg + exit 1)
+;;   parse_error_line — file:line: msg + exit 1); the parse-then /
+;;   parse-or kit is imported from intrp-state.toc (state/)
 
 ;; (def <rule>) crutches — cycle rules only
 ;; rule defns (topological order) + lifted helpers
@@ -353,14 +355,20 @@ to the parent value (state is threaded); `Error` → `ParserError`.
 ### Result discrimination (inherited; one semantics change)
 
 The generated parser discriminates `ParserMatch` / `ParserIgnore` /
-`ParserError` with the two-op protocol kit emitted once in the
-module header — `parse-then` (Match applies the 2-arg continuation;
-Ignore/Error short-circuit) and `parse-or` (Match/Ignore return r;
-Error forces the else-fn — laziness IS the short-circuit) — with the
-site templates (a) Any nested parse-or, (b) Many loop exit, (c) All
-nested parse-then, (d) the main's error line. Full text in
-`docs/parser-generator-plan-bad.md`, section "Result
-discrimination". CHANGE: the old plan's `Ignore` short-circuit
+`ParserError` with the two-op protocol kit — `parse-then` (Match
+applies the 2-arg continuation; Ignore/Error short-circuit) and
+`parse-or` (Match/Ignore return r; Error forces the else-fn —
+laziness IS the short-circuit) — with the site templates (a) Any
+nested parse-or, (b) Many loop exit, (c) All nested parse-then, (d)
+the main's error line. CHANGE 1 (2026-10-16, side quest SQ-1):
+the kit is DEFINED IN `interpreter/intrp-state.toc` (next to the
+`ParserResults` ctors it dispatches on), not emitted in the module
+header — it is the same code for every reader and has no grammar
+dependency. Generated code calls `state/parse-then` /
+`state/parse-or`, and the site templates carry the `state/` prefix.
+The kit's code text is the one in `docs/parser-generator-plan-bad.md`,
+section "Result discrimination" (the source it was transcribed
+from). CHANGE 2: the old plan's `Ignore` short-circuit
 semantics (its site template, the "`Ignore` stops a `parse-then`
 sequence" note) is SUPERSEDED — the redefined `Ignore` (ctor-set
 section) never produces `ParserIgnore`, so the kit's Ignore arms are
@@ -375,9 +383,10 @@ remains helper-layer, never grammar.
   grammar exercising `Node` + auto-loc + a mutual-Ref cycle added
   to the driver) and re-blessed ONCE after owner review (items
   5a/5b). The
-  six predicate files are expected to survive byte-identical; the
-  module files change (skip-at-entry, crutch policy, defn order,
-  multi-char literals, the redefined `Ignore`). The `ig` grammar now
+  six predicate files are expected to survive byte-identical;
+  the module files change (skip_at_entry, crutch policy, DEF
+  order, multi-char literals, the REDEFINED `Ignore`, the
+  `state/`-prefixed kit calls). The `ig` grammar now
   tests the discard-and-continue `Ignore` semantics. Thereafter
   `make emit-pred` is the byte-exact net at every item.
 - **The generated reader (acceptance files):** `make gen-accept`
@@ -593,6 +602,24 @@ item: this file + AGENTS.md. Generated code follows
     clean (exit 0, no leak complaints), the control still runs clean,
     and the existing regression tests still pass.
 
+- [x] **SQ-1 (side quest, 2026-10-16). Result-discrimination kit —
+  `intrp-state.toc`**
+  Owner ruling: `parse-then` / `parse-or` are the same code for
+  every reader (a pure protocol over the `ParserResults` ctors, no
+  grammar dependency), so they belong in the state kit, not in the
+  generated module header (the header placement was inherited from
+  the old plan, which pre-dated the state-kit extraction). The kit
+  (the old plan's "Result discrimination" text, em-dash
+  ASCII-fixed) is spliced into `interpreter/intrp-state.toc` after
+  the `ParserResults` deftype; generated code calls
+  `state/parse-then` / `state/parse-or`. Consequences recorded in
+  the Settled section (CHANGE 1), the module template, 4b.6
+  (emitted calls gain the `state/` prefix), 4c.2 (header loses the
+  kit), and the test strategy (want files).
+  - Done when: `interpreter/intrp-state.toc` loads clean (same
+    check as item 1) with both protocols present; the plan's
+    Settled section, template, and 4b.6 / 4c.2 updated.
+
 - [ ] **4b.5. Emitter v3: render — `Many`**
   Char-level child → fast path (`<name>-char` set-predicate defn +
   `read-run` wrapper, the run as ONE string); otherwise slow path
@@ -608,6 +635,9 @@ item: this file + AGENTS.md. Generated code follows
   skip-at-entry in every parser entry (rule defns, lifted helpers,
   inlined literal / one-char bodies, fast-path run wrappers). A pure
   refactor of the existing renders — no new ctors.
+  The emitted kit calls also gain the `state/` prefix here (the
+  `parse-then` / `parse-or` kit moved to `intrp-state.toc` in side
+  quest SQ-1 - the current renders emit bare names).
   - Done when: the library loads clean; a temporary probe (deleted
     before the commit) re-renders the 4b.1-4b.5 shapes with the
     context threaded and each emitted source is hand-verified
@@ -639,9 +669,9 @@ item: this file + AGENTS.md. Generated code follows
 
 - [ ] **4c.2. Emitter v3: module assembly + driver API**
   Module assembly per the Settled section: the module header
-  (add-ns state + raw; the `parse-then` / `parse-or` kit; the
-  parse-error kit); `(def <rule>)` crutches exactly on the 4c.1
-  cycle rules; rule defns in the 4c.1 topological order; lifted
+  (add-ns state + raw; the parse-error kit — the `parse-then` /
+  `parse-or` kit is imported from `state/`, side quest SQ-1);
+  `(def <rule>)` crutches exactly on the 4c.1 cycle rules; rule defns in the 4c.1 topological order; lifted
   helpers; `parse-program` + thin `main` per the template; and the
   `emit-pred` / `emit-module` API per the Settled section.
   - Done when: the library loads clean; a temporary probe (deleted
@@ -772,6 +802,7 @@ concern the compiler project are mirrored in
 - (2026-10-10, item 4b.2a) The 4b.2a codegen fix is IN: `wrap-proto` in `codegen.toc` (the `TaggedSymbol` impl) is guarded by `(cond (b/is-glbl (.var ast)) <proto-thunk wrap> (se/state-error (.var ast)))` — non-global symbols (locals) skip the proto-thunk wrap and pass through as bare C variables, so a local shadowing a core protocol value (`vals`) no longer resolves through `get-value`'s core-module fallthrough to the core prototype-ast and no longer triggers a spurious top-level thunk. `new-toc` was rebuilt (`make new-toc`). The repro was verified through a temporary `codegen-rec-lambda` Makefile target, which the owner removed after verification (2026-10-11) — the repro stays in `scratch/` for manual build/run.
 - (2026-10-10, item 4b.2a) `make tests` exits 0 even though the `nested-same-closure-codegen` probe aborts — that probe is a KNOWN-BAD codegen-bug repro whose documented expected output is `Compiler screwed up. Incomplete result. at runtime3.c:3396` (see its file header); its `.rslt` is untracked and empty. The real net is the 51 TRACKED `.rslt` files staying byte-identical (`git status regression-tests/*.rslt` empty after `make tests`).
 - (2026-10-10, item 4b.2a) new-toc silent segfaults can be file-specific and FLAKY: `regression-tests/test-bmi.toc` segfaulted (exit 139, no message) on 2 of 10 compiles with the freshly rebuilt new-toc; retries succeed. Treat as transient per the Toolchain policy and retry; a flaky file is not evidence of a deterministic break.
+- (2026-10-16, SQ-1) A new-toc LOAD does not validate protocol-impl coverage: a bodyless `defp` with a missing `extend-type` impl for a ctor, or a duplicate impl, loads clean — the failure surfaces only at dispatch time (the `No implementation of ... found for type` abort). Instance: during the SQ-1 splice, a candidate in which the `ParserIgnore` `parse-or` impl was clobbered by a duplicate `ParserError` impl passed `toc_edit.py`'s new-toc gate (exit 0). Also: `toc_edit.py` trims a snippet's trailing newline on splice (the blank line after the spliced block must be arranged via a `replace` of the last form with itself-plus-newline) — and its `parse` gate rejects a snippet that STARTS with unowned bytes (bare leading newlines), but tolerates trailing ones.
 
 ## As-built notes
 
@@ -795,3 +826,5 @@ to check against.
 - (2026-09-27, item 4b.2, DONE) Built: the wrapper-ctor renders in `interpreter/intrp-emit.toc` — `render-ignore` (`(parse-then <child> (fn [_ s2] (state/ParserMatch empty-vector s2)))` — the discard fn binds `_`, threads `s2`, standalone value the unit `empty-vector`); `render-concat` (nested `parse-then` over the children, the value joined into ONE string at the innermost `ParserMatch`); `render-node` (`(parse-then <child> (fn [v s2] (state/ParserMatch (raw/<name> <args> (state/state-line (state/skip-whitespace sv))) s2)))` — the child's value spread as ctor args, the auto-loc the entry state's line). Plus the value-shape/arity helpers: `char-level`, `ir-value-shape` (string/vector classifier — aborts on Ref/Node/Ignore/Error: Ref needs the rule set at 4c.2, the rest are not value sources in scope (a)), `ir-value-arity` (static arity for vector shapes — aborts on Many-slow: dynamic arity not spreadable), `vec-arg-exprs`, `node-value-args`, `concat-fragment` (string value as-is, vector value flatten-joined via `(reduce v "" (fn [acc s] (str acc s)))`), `concat-fragments`, `join-strings`, `build-join`, `gen-vnames`. The render dispatch `render-child` and the wrappers are mutually recursive (the wrappers render their children via the dispatch); new-toc is single-pass, so the dispatch is crutch-declared (`(def render-child)`) before the wrappers and its `defn` after them. Verified: the library loads clean (exit 134, `*** Loaded interpreter/intrp-emit.toc`, standard missing-main tail); a temporary interpreter-side probe (deleted before the commit) rendered `Ignore` over a CharRange, `Concat` of two CharRanges, and `Node "Symbol"` over that Concat — every emitted source hand-verified (the discard-fn shape, the `(str v0 v1)` join in child order, the `(raw/Symbol v (state/state-line (state/skip-whitespace state)))` ctor call with the auto-loc field); probe compiled and ran clean: malloc diff 0, remaining nodes 0, exit 0. Three bugs found and fixed during verification: (1) the helper was first named `vector-arg-exprs` — a Toccata symbol may NOT start with `vector` (the parser splits it: `vectorx` → `vector` + `x`, `vector-arg-exprs` → "Undefined symbol: '-arg-exprs'"); renamed to `vec-arg-exprs`. (2) `.data ir` is a raw Vector, not a Maybe — the wrappers wrongly did `(extract (.data ir))` ("No implementation of 'extract' found for type Vector"); the 4b.1 leaves correctly do `(extract (get (.data ir) i))`; fixed all 8 wrapper/helper sites to use `.data ir` directly. (3) the Concat join came out REVERSED (`(str v1 v0)`) — `conj` appends to the END (verified: `conj (conj (vector "a") "b") "c"` = [a b c]), so the forward 0→n recursion in `concat-fragments` built the fragment vector in reverse; changed it to recurse n→0 (like `vec-arg-exprs`). New facts: a Toccata symbol cannot start with `vector`; `conj` appends to the end; the crutch `(def name)` works in a module loaded via `add-ns`; a probe that `add-ns`es the emitter must live in the SAME directory (same module path string) or the grammar loads twice (two distinct ctor types) and the emitter's `defimpl`s don't match the probe's types — the probe was therefore placed in `interpreter/` (deleted before the commit), a deviation from the scratch/-only probe convention forced by the double-load. NOTE: the `concat-fragment` / `concat-fragments` / `join-strings` / `build-join` / `gen-vnames` helpers described in this entry were DELETED in the clean-slate simplification (2648e8c, "inline the one-use helpers"); the current `Concat` render joins the child vnames with a bare `(str ...)` and is correct ONLY for all-string children — the `Many`-child flatten-join is not built and is re-scoped into 4b.3.
 - (2026-09-27, item 4a, DONE) Built: the clean-slate rewrite of `interpreter/intrp-emit.toc` for the analyze phase — `NodeIR [kind char-level? data]` (one deftype: `kind` the ctor name, `char-level?` a Maybe, `data` the raw fields for leaves / the child IRs for containers); the `analyze-node` protocol (defp + one extend-type impl per ctor type — 13 impls); the ir-* builder defns (one per ctor); `analyze [pc]` = `(fold pc analyze-node)`. Classification per the Settled design: CharRange / NotChar / one-char String are `Some None`; Any iff ALL alts are char-level (a reduce over the child flags); Rule / Many delegate to their child; Ref / Node / Concat / All / Ignore / AlwaysSucceed / Error never are. Ref and String are leaves, so the fold terminates structurally. DEVIATION (reported): the Settled section prescribes `h` / `h-dispatch` as one defn dispatching on `type-name` via a flat cond, but that shape deterministically miscompiles (Inherited verified facts, 2026-09-27 item 4a first bullet): with a defn handler, any fold that reaches a map-recurse ctor (Any / All / Concat) aborts the generated program with `Compiler screwed up. Incomplete result` (Tag SUB, runtime3.c:3396) — 5/5 with the same binary, minimal repro a fold over `(Any [CharRange NotChar])` with a plain no-cond defn. The protocol shape — the v1 EBNF emitter's proven pattern — runs the same fold clean, so `analyze-node` is a defp; the entry point keeps the plan's name and body (`analyze [pc]` = `(fold pc analyze-node)`). Verified: the library loads clean (exit 134, `*** Loaded interpreter/intrp-emit.toc`, standard missing-main tail); two temporary interpreter-side probes (deleted before the commit) ran `analyze` over (a) five hand-written rule values covering all 13 ctors (including a self-Ref and a mutual-Ref cycle) and (b) fifteen standalone ctor shapes — every node's kind, char-level? flag, and data (raw fields / child IRs) hand-verified correct; malloc diff 0, remaining nodes 0, exit 0. Note: `make emit-pred` fails to load (the driver references the dropped v1/v2 grammar ctors) — the expected mid-transition state until the item-5 driver rewrite.
 - (2026-10-11, item 4b.4, BLOCKED — new-toc codegen bug, see 4b.4a) Picked up the uncommitted Any-render WIP from the prior interrupted run (`interpreter/intrp-emit.toc`: the `alt-string?` / `alt-lift?` defaulting protocols, `group-cond`, `lift-defn`, the `AnyWalk` / `AnyChain` accumulators, `any-walk-step`, and the `grammar/Any` `render-child` impl). Verified the library loads clean (exit 134, `*** Loaded interpreter/intrp-emit.toc`, standard missing-main tail, no error lines). Wrote `interpreter/probe-4b4.toc` (an `Any` with two bare-String alts + a CharRange + an anonymous non-char-level alt); it COMPILES (build exit 0) but ABORTS at runtime: `No implementation of 'either' found for type <unknown> (6) called from interpreter/intrp-emit.toc: 277` (the `any-walk-step`'s outer `(either (map …))`). Root-caused to a new-toc codegen bug (new blocker item 4b.4a): in `(either (map <computed-maybe> <fn>) <else>)` the generated C drops the fn-literal from the `map` call's APP chain (1 arg instead of 2) and the `else` from the `either` call's APP chain (1 arg instead of 2); the fn body is not emitted into the C at all. The drop is CONTEXT-DEPENDENT — ruled out as the trigger: fn-body complexity alone (a complex then-fn still drops), preceding top-level defns (0/3/10/30 all drop), and merely loading the emitter library (the repro still drops with `intrp-emit.toc` add-ns'd). It does NOT fire when the either/map sits under an enclosing `let` whose binding the then-fn references — the exact `all-tail` shape, which is why 4b.3 built and the 4b.4 `any-walk-step` (no such enclosing `let`) does not. Minimal repro `scratch/codegen-either-map-fn.toc` (fails) + control `scratch/codegen-either-map-fn-control.toc` (runs clean) both verified this run. Also fixed a genuine Toccata arity bug in the WIP's `any-walk-step` (the inner branch was `(either (map (.group-done acc) acc (AnyWalk …)))` — `map` with 3 args, `either` with 1 — now `(either (map (.group-done acc) (fn [_] acc)) (AnyWalk …))`). The WIP is left in the worktree UNCOMMITTED (loads clean, fails at runtime); box 4b.4 left unchecked. Root cause not yet located in `codegen.toc`; unblocking 4b.4 requires fixing 4b.4a (a `codegen.toc` change + `make new-toc`), a separate task.
+
+- (2026-10-16, SQ-1 side quest, DONE) Built: the result-discrimination kit in `interpreter/intrp-state.toc` — `defp parse-then [r f]` + one `extend-type` impl per `ParserResults` ctor (Match applies the 2-arg continuation; Ignore/Error short-circuit to r), and `defp parse-or [r else-f]` + three impls (Match/Ignore return r; Error forces the else-fn), spliced after the `ParserResults` deftype via `toc_edit.py` (parse-gated snippet; insert --before the Grouping-types comment; validate-then-write). The kit text is the old plan's "Result discrimination" code verbatim except one em-dash replaced by a hyphen (pure-ASCII rule for .toc files). Plan updated to match: Files section, the Result-discrimination section (CHANGE 1), the generated-module template (header loses the kit), the test strategy's want-file change list, 4b.6 (emitted kit calls gain the `state/` prefix — the current renders emit bare names, and the emitter file was left untouched because it carries the uncommitted blocked 4b.4 WIP), and 4c.2 (header list). Verified: `toc_edit.py check` exit 0; `./new-toc interpreter/intrp-state.toc` prints `*** Loaded interpreter/intrp-state.toc`, no other error lines (standard missing-main tail). One self-inflicted slip (a cosmetic blank-line fix replaced the wrong top-level node — the `ParserIgnore` impl was temporarily clobbered by a copy of the `ParserError` impl, and new-toc's load gate passed it, see the new verified fact) — caught by re-reading the spans, restored; the owner fixed the resulting blank line by hand. No design gap.
