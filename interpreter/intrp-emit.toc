@@ -34,6 +34,19 @@
 (defp not-ignore? [v]
   (Some v))
 
+;; alt-string? [alt]: Some alt iff the alt is a bare String literal
+;; (the groupable alt kind); None otherwise. A defaulting predicate
+;; protocol - only String needs an impl.
+(defp alt-string? [alt]
+  None)
+
+;; alt-lift? [alt]: Some alt iff the alt lifts to an index-path
+;; helper defn (every anonymous non-literal combinator); None for
+;; the inline alts (bare String, CharRange, NotChar, Ref).
+(defp alt-lift? [alt]
+  (Some alt))
+
+
 ;; concat-fragment [n vname]: the join fragment for a Concat child n
 ;; whose value is bound to vname - the vname as-is for a string-shaped
 ;; child; the flatten-join for a vector-shaped child (Many). A protocol
@@ -164,6 +177,127 @@
                  "(vector " (to-str (interpose valnames " ")) ")"
                  " " sv ")"))))
 
+;; =====================================================================
+;; Phase 2 - render (item 4b.4): Any.
+;;
+;; Any [ps] - ordered alternatives: the nested parse-or (site-(a)) -
+;; every alt is tried over the SAME entry state (a failed alt consumes
+;; nothing), each else-fn tries the next alt, the innermost else-fn
+;; returns the last alt BARE (the last Error falls out for free).
+;; ALT ORDER IS SEMANTICS - the grammar's ordering is preserved
+;; verbatim.
+;;
+;; The alts' slots, in order:
+;;   * the bare-String alts collapse into ONE inlined grouped cond at
+;;     the FIRST String alt's slot (>=2 literals - the item-8
+;;     grouped-literal form: ONE inlined cond in parse-or position is
+;;     the verified-building shape; the crash was >=2 separate inlined
+;;     String conds). A lone String alt keeps its own render.
+;;   * the char-level alts (CharRange / NotChar) and the Ref alts
+;;     inline their let-free render over sv.
+;;   * every other anonymous alt LIFTS to an index-path helper defn
+;;     (alt-<i>, the alt's index - the 4b.6 prefix threading prepends
+;;     the rule context): the slot is the named call, the defn block
+;;     precedes the parse-or line.
+;;
+;; The returned lines: the lifted helper defn blocks (alt order),
+;; then ONE final line - the whole parse-or chain, self-balanced, so
+;; the wrapper splices (Ignore / Node / Concat) and the rule defn
+;; (4b.7) can carry it.
+
+;; group-cond [lits sv]: the ONE inlined cond for the grouped
+;; bare-String alts - one (str-prefix? L input) test clause per
+;; literal, in alt order, each matching to the ParserMatch of the
+;; literal over the take-chars advance, and the default the
+;; ParserError (the "expected one of" message). One line,
+;; self-balanced.
+(defn group-cond [lits sv]
+  (let [SV (skip-expr sv)]
+    (str "(cond "
+         (to-str (interpose (flat-map lits
+                                     (fn [l]
+                                       (vector (str "(str-prefix? " (render-literal l) " (.input " SV ")"))
+                                               (str "(state/ParserMatch " (render-literal l) " (state/take-chars " SV " " (count l) "))")))
+                             " "))
+         (str " (state/ParserError "
+              (render-literal
+               (str "expected one of: "
+                    (to-str (interpose (map lits render-literal) ", "))))
+              " " SV "))")
+         ")")
+  ))
+
+
+;; lift-defn [name res]: the defn block (one line-chunk, embedded
+;; newlines) for the lifted alt named name - the alt's render res
+;; over the defn's `state` param. Aborts when res carries helper
+;; lines of its own (a nested anonymous Any) - the unique sub-helper
+;; names land with the 4b.6 prefix threading.
+(defn lift-defn [name res]
+  (let [bad (reduce res None
+                    (fn [a l]
+                      (either (map a (fn [_] a))
+                              (cond (and (<= 6 (count l))
+                                         (str= (subs l 0 6) "(defn "))
+                                    (Some None)
+                                    None))))]
+    (either (map bad
+             (fn [_] (abort "render: Any: a lifted alt carries helper lines of its own (nested anonymous Any) - the 4b.6 prefix threading lands this")))
+        (str "(defn " name " [state]\n" (to-str res) "\n)"))
+))
+
+;; AnyWalk [slots helpers i group-done]: the alt-walk accumulator -
+;; the slot expressions so far (alt order), the lifted helper defn
+;; blocks so far (alt order), the current alt's index, and the
+;; group-done flag (None until the grouped cond has taken its slot).
+(deftype AnyWalk [slots helpers i group-done])
+
+;; AnyChain [expr level]: the parse-or chain accumulator (the reduce
+;; over the reversed slots, the innermost alt as the init) - the
+;; chain expression so far and the else-fn level (the next e<level>
+;; param name).
+(deftype AnyChain [expr level]);; any-chain-step [a s]: one parse-or wrap of the chain accumulator -
+;; the new alt s as the parse-or's first arg, the accumulated expr a
+;; as the else-fn body, the else-fn level decremented. A named defn
+;; (not an fn literal) so the reduce call in the Any render's
+;; either-then branch carries no fn literal - a fn literal there
+;; drops the else-branch abort's location-string global in new-toc
+;; codegen (Inherited verified facts, 2026-10-11).
+(defn any-chain-step [a s]
+  (AnyChain (str "(parse-or " s " (fn [e" (.level a) "] " (.expr a) "))")
+            (dec (.level a))))
+
+
+;; any-walk-step [a sv gslot acc]: one alt of the Any slot walk.
+;; The FIRST bare-String alt takes the group slot (the grouped cond,
+;; or the lone literal's own render); the later String alts are
+;; dropped (the group stands in for them). A lifted alt: its helper
+;; call in the slot, its defn block appended to the helpers. An
+;; inline alt: its render expression over sv.
+(defn any-walk-step [a sv gslot acc]
+  (either (map (alt-string? a)
+               (fn [_]
+                 (either (map (.group-done acc)
+                              (fn [_] acc))
+                         (AnyWalk (conj (.slots acc) gslot)
+                                  (.helpers acc)
+                                  (+ (.i acc) 1)
+                                  (Some None)))))
+          (either (map (alt-lift? a)
+                       (fn [_]
+                         (let [nm (str "alt-" (.i acc))
+                               rs (render-child a "state")]
+                           (AnyWalk (conj (.slots acc) (str nm " " sv))
+                                    (conj (.helpers acc) (lift-defn nm rs))
+                                    (+ (.i acc) 1)
+                                    (.group-done acc)))))
+                  (AnyWalk (conj (.slots acc) (to-str (render-child a sv)))
+                           (.helpers acc)
+                           (+ (.i acc) 1)
+                           (.group-done acc)))))
+
+
+
 
 (extend-type grammar/All
   (render-child [n sv]
@@ -174,6 +308,29 @@
 
 
 (extend-type grammar/Any
+  (render-child [n sv]
+    (let [alts (.parsers n)
+          lits (filter alts alt-string?)
+
+          gslot (cond (= (count lits) 1)
+                      (either (map (first lits)
+                                   (fn [l] (to-str (render-child l sv))))
+                              "")
+                      (group-cond lits sv))
+          walk (reduce alts
+                       (AnyWalk empty-vector empty-vector 0 None)
+                       (fn [a c] (any-walk-step c sv gslot a)))
+          slots (.slots walk)
+          rev (reverse slots)
+          chain (either (map (first rev)
+             (fn [i]
+               (reduce (rest rev)
+                       (AnyChain i (dec (count slots)))
+                       any-chain-step)))
+        (abort "render: Any: no alts"))
+
+]
+      (comp (.helpers walk) (vector (.expr chain)))))
   (node-value-args [n v]
     (either (map (first (.parsers n))
              (fn [p] (node-value-args p v)))
@@ -204,7 +361,9 @@
                     " (state/ParserMatch " C " (state/take-char " SV "))"
                     " (state/ParserError " msg " " SV "))"))))
   (node-value-args [n v]
-    (vector v)))
+    (vector v))
+  (alt-lift? [v]
+    None))
 
 (extend-type grammar/NotChar
   (render-child [n sv]
@@ -217,7 +376,9 @@
                         " (state/ParserMatch " C " (state/take-char " SV "))"
                         " (state/ParserError " msg " " SV "))"))))
   (node-value-args [n v]
-    (vector v)))
+    (vector v))
+  (alt-lift? [v]
+    None))
 
 ;; the bare-String literal leaf (mixed in among the ctor values in
 ;; Any / All).
@@ -232,11 +393,17 @@
   (render-constant [n sv]
     (str "(state/ParserMatch " (render-literal n) " " sv ")"))
   (node-value-args [n v]
-    (vector v)))
+    (vector v))
+  (alt-string? [v]
+    (Some v))
+  (alt-lift? [v]
+    None))
 
 (extend-type grammar/Ref
   (render-child [n sv]
-    (vector (str "(" (.name n) " " sv ")"))))
+    (vector (str "(" (.name n) " " sv ")")))
+  (alt-lift? [v]
+    None))
 
 (extend-type grammar/AlwaysSucceed
   (render-child [n sv]
