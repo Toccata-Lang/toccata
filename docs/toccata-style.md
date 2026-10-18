@@ -292,5 +292,53 @@ side effects — an effect in the duplicated region fires once per branch
 the branch it flows into. If all branches of a superposition terminate, the
 result is a single empty superposition.
 
+### `collapse`
+
+`collapse f S acc` folds a binary function `f` across a superposition `S`,
+threading `acc` as the seed. If the non-empty leaves of `S` are `a1 ... aN`
+(in source order), the result is the right fold:
+
+```
+collapse f S acc  =  f(a1, f(a2, ... f(aN, acc) ...))
+```
+
+It collapses the **entire** tree, not one level: the superposition case
+re-dispatches `collapse` on each subtree.
+
+How `S` is decomposed:
+
+* a plain value (int / ref / lambda / ...) — single leaf — `f(S, acc)`.
+* a superposition `S1 | S2` — recurse on both sides; the right side is folded
+  first and its result becomes the accumulator for the left side.
+* `NUL` / empty (`(|)`) — no leaves — the base case: returns `acc` (and
+  erases `f`).
+* a `VAR` — resolve the indirection, then re-dispatch.
+* one side `NUL` — the empty side is pruned; continue on the survivor only.
+
+Mechanism: `f` is duplicated (a `DUP` node) so each leaf gets its own copy;
+one branch is deferred in a `LAZ` thunk and the other re-dispatched
+immediately, threading the accumulator right-to-left. That threading is what
+makes it a right fold and what flattens the whole tree. Empty (`NUL`) branches
+are transparent — they pass `acc` straight through and contribute nothing.
+
+Short-circuiting: each `f` decides whether to thread its second argument, so a
+`f` that returns a constant (ignoring its accumulator) truncates the fold —
+leaves on the dropped side are discarded:
+
+```
+(defn cons-small [x l]
+  (cond (< x 3)
+        (cons x l)
+        EndOfList))
+
+(collapse cons-small (| 1 2 3 4) EndOfList)   ;; => (1 (2 ()))  (3 and 4 dropped)
+```
+
+Examples:
+
+* `(collapse + S 0)` — sum of all leaves.
+* `(collapse cons S EndOfList)` — list of all leaves in order.
+* `(collapse f (|) acc)` — `acc` (empty superposition).
+
 Planned primitives (not yet implemented, unnamed): superposing all values of
 a vector over a single fn, and converting a superposed value to a vector.
