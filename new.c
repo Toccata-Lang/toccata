@@ -1280,8 +1280,8 @@ void interact(Term neg, Term pos) {
       graphCount++;
     }
   }
-  if (rdxCount == 1484)
-    BOOM("all done");
+  // if (rdxCount == 1484)
+  // BOOM("all done");
   // */
 
   // if (termLab(pos) == SUP && termLoc(pos) == 0x15a) {

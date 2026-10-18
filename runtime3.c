@@ -3242,7 +3242,7 @@ void graphFn(Term ref, Term args) {
     default:
       printRawTerm(val);
       printf("\n");
-      BOOM("nativeArgs");
+      BOOM("graphFn");
       break;
     }
   } else {
@@ -3252,6 +3252,105 @@ void graphFn(Term ref, Term args) {
     move(portLoc(2, args), arg);
   }
 }
+
+
+// collapseFn - collapses a superposition with the given function
+void collapseFn(Term ref, Term args) {
+  NativeArgs argsStruct = {0, {}};
+  args = strictArgs(ref, args, 1, &argsStruct);
+  if (argsStruct.count != 1) {
+    return;
+  }
+
+  args = take(portLoc(2, args));
+  Term arg = take(portLoc(1, args));
+  Term f = argsStruct.args[0];
+
+  switch(termTag(arg)) {
+  case VAR: {
+    Term val = take(termLoc(arg));
+    Tag valTag = termTag(val);
+    if (valTag == VAR) {
+      varArg(val, ref, args, &argsStruct);
+    } else {
+      swap(portLoc(1, args), val);
+      Term deferredArgs = makePair(APP, 0, f, args);
+      pushRedex(deferredArgs, ref);
+    }
+  }
+    break;
+
+  case LAM: {
+    TermVal *tv = malloc_term();
+    tv->trmLoc = allocPair();
+    swap(tv->trmLoc, arg);
+    arg = termVal((Term)tv);
+  }
+
+  case I60:
+  case F60:
+  case VAL:
+  case REF:
+    swap(portLoc(1, args), arg);
+    pushRedex(args, f);
+    break;
+
+  case NUL:
+    args = take(portLoc(2, args));
+    Term v = take(portLoc(1, args));
+    move(portLoc(2, args), v);
+    for (int i = 0; i < argsStruct.count; i++)
+      dec_and_free(argsStruct.args[i], 1);
+    break;
+
+  case SUP: {
+    Term v1 = take(portLoc(1, arg));
+    Term v2 = take(portLoc(2, arg));
+
+    Tag t1 = termTag(v1);
+    Tag t2 = termTag(v2);
+    if (t1 == NUL && t2 == NUL) {
+      pushRedex(ERA, f);
+      args = take(portLoc(2, args));
+      arg = take(portLoc(1, args));
+      move(portLoc(2, args), arg);
+    } else if (t2 == NUL) {
+      swap(portLoc(1, args), v1);
+      args = makePair(APP, 0, f, args);
+      pushRedex(args, ref);
+    } else if (t1 == NUL) {
+      swap(portLoc(1, args), v2);
+      args = makePair(APP, 0, f, args);
+      pushRedex(args, ref);
+    } else {
+      Term dF = makePair(DUP, 0, SUB, SUB);
+      pushRedex(dF, f);
+      Term f1 = newTerm(VAR, 0, portLoc(1, dF));
+      Term f2 = newTerm(VAR, 0, portLoc(2, dF));
+      args = take(portLoc(2, args));
+      Term base = take(portLoc(1, args));
+
+      Term z = makePair(APP, 0, base, SUB);
+      Location lazLoc = portLoc(2, z);
+      z = makePair(APP, 0, v2, z);
+      z = makePair(APP, 0, f2, z);
+      z = makePair(LAZ, 0, z, ref);
+      swap(lazLoc, z);
+
+      swap(portLoc(1, args), newTerm(VAR, 0, lazLoc));
+      args = makePair(APP, 0, v1, args);
+      args = makePair(APP, 0, f1, args);
+      pushRedex(args, ref);
+    }
+  }
+    break;
+
+  default:
+    BOOM("Invalid arg");
+    break;
+  }
+}
+
 
 #ifndef TESTING_HVM
 char *typeName(unsigned typeNum) {
