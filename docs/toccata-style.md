@@ -308,8 +308,10 @@ re-dispatches `collapse` on each subtree.
 How `S` is decomposed:
 
 * a plain value (int / ref / lambda / ...) — single leaf — `f(S, acc)`.
-* a superposition `S1 | S2` — recurse on both sides; the right side is folded
-  first and its result becomes the accumulator for the left side.
+* a superposition `S1 | R` — `S1` is re-dispatched immediately and `R` is
+  deferred: if `R` is never used (the left-side `f` does not thread its
+  accumulator), it is folded not at all; if it is used, it is folded first
+  and its result becomes the accumulator for the left side.
 * `NUL` / empty (`(|)`) — no leaves — the base case: returns `acc` (and
   erases `f`).
 * a `VAR` — resolve the indirection, then re-dispatch.

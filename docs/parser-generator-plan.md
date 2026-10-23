@@ -287,7 +287,7 @@ iff child. Per ctor:
 |---|---|
 | `CharRange` / `NotChar` | one-char parser (skip first, then pred); bodies are let-free and inline at use sites |
 | bare `String` | literal match: `(str-prefix? S input)` + `(state/take-chars s n)` (the kit's n-char advance; literals contain no newlines, so the line counter is untouched); let-free, inlines at use sites |
-| `Any` | nested `parse-or` (site-(a)); anonymous alts lifted to index-path helpers; ≥2 bare-String alts collapse into ONE inlined grouped cond (the item-8 grouped-literal form — the inlined-cond codegen crash resolution stands); ALT ORDER IS SEMANTICS — the grammar's ordering (longest-literal-first, keyword-heads before catch-alls) is preserved verbatim |
+| `Any` | bare superposition at the site + the reader's ONE top-level `collapse` (site-(a), CHANGE 3): the alts as ONE `(| ...)` in the grammar's ordering, NO collapse at the site — the superposition propagates up the parse and the single `collapse state/any-fold` at the very top of the grammar folds it over a default `ParserError`; anonymous alts lifted to index-path helpers (the branch is a call); bare-String / char-level alts inlined as branches; leftmost-first precedence, first complete Match wins, branches right of the winner never forced (the collapse mechanism verified 2026-10-18; the propagating shape to be probed under 4b.4); ALT ORDER IS SEMANTICS — the grammar's ordering (longest-literal-first, keyword-heads before catch-alls) is preserved verbatim |
 | `All` | nested `parse-then` (site-(c)); value = vector of its non-`Ignore` sub-values, UNLESS `Node`-wrapped |
 | `Many` | char-level child → fast path (`<name>-char` set-predicate defn + `read-run` wrapper, run as ONE string); otherwise slow path (lifted child + site-(b) acc-recursion loop, value = vector) |
 | `Rule` | module-level `(defn <name> [state] ...)`; in sub-position, a bare-name call |
@@ -297,8 +297,9 @@ iff child. Per ctor:
 | `Ignore` | `(parse-then (<ref> state) (fn [_ s2] <rest>))` — parse, discard the value, thread the state; contributes nothing to an enclosing `All`'s vector; produces no `ParserIgnore` (see the ctor-set section) |
 | `AlwaysSucceed` / `Error` | `(ParserMatch <v> state)` (String constants, via the `render-constant` protocol) / `(ParserError MSG state)` |
 
-**Module assembly.** Header (`add-ns` state + raw; the
-`parse-then` / `parse-or` kit; the parse-error kit), then
+**Module assembly.** Header (`add-ns` state +
+raw; the parse-error kit — the result-discrimination kit and
+`any-fold` are imported from `state/`, SQ-1 / CHANGE 3), then
 `(def <rule>)` crutches — **only for rules in a cycle** (self-`Ref`
 or mutual; computed over the `Ref` name graph), then rule defns in
 **topological order** (dependencies first, so every non-recursive
@@ -336,7 +337,8 @@ to the parent value (state is threaded); `Error` → `ParserError`.
 
 ;; the parse-error kit (parse-error-msg / parse-error-state /
 ;;   parse_error_line — file:line: msg + exit 1); the parse-then /
-;;   parse-or kit is imported from intrp-state.toc (state/)
+;;   parse-or kit and any-fold are imported from intrp-state.toc
+;;   (state/)
 
 ;; (def <rule>) crutches — cycle rules only
 ;; rule defns (topological order) + lifted helpers
@@ -373,7 +375,36 @@ semantics (its site template, the "`Ignore` stops a `parse-then`
 sequence" note) is SUPERSEDED — the redefined `Ignore` (ctor-set
 section) never produces `ParserIgnore`, so the kit's Ignore arms are
 unreachable from generated code but stay for totality. Whitespace
-remains helper-layer, never grammar.
+remains helper-layer, never grammar. CHANGE 3 (2026-10-18): site
+(a) is SUPERSEDED — `Any` is no longer nested `parse-or`. Each
+generated Any site is a BARE SUPERPOSITION — `(| <alt 1> ... <alt n>)`,
+one branch per alt in the grammar's ordering, NO collapse at the
+site (owner ruling 2026-10-18). The superposition propagates up
+through the surrounding parse (HVM distribution: kit calls and
+protocol dispatch branch over it), and the entire reader contains
+exactly ONE `collapse`, called at the very top of the grammar —
+the generated entry wraps the whole parse: `(collapse state/any-fold
+<parse> (state/ParserError MSG <sv>))`. The fold fn is `any-fold` —
+a new kit defn in `interpreter/intrp-state.toc` next to `parse-or`
+(the SQ-1 rationale: same code for every reader, no grammar
+dependency): `(defn any-fold [r acc] (parse-or r (fn [x] acc)))`
+(Match/Ignore → r, Error threads the accumulator): the top fold
+walks the branches in order; the first complete Match wins and
+drops the accumulator, so the right side is folded NOT AT ALL
+(docs/toccata-style.md, `collapse`) — branches right of the winner
+are never forced; failing branches run to completion (they must,
+to know they failed). The 2026-10-18 scratch probe (deleted after
+recording — Inherited verified facts) verified the collapse +
+`any-fold` mechanism itself: leftmost-first precedence, true
+short-circuit of the unforced right side, a shared state ref
+intact across all branches and the result, protocol dispatch
+inside the fold fn, one plain result (malloc diff 0, remaining
+nodes 0). The propagating shape (bare `|` sites, single top-level
+collapse) still needs its own probe under 4b.4 — including that
+the branch order of the accumulated superposition is the per-site
+leftmost-first (lexicographic) order. Sites (b) / (c) / (d) are
+unchanged; `parse-or` stays (the fold-fn's discriminator, plus the
+Many / All sites).
 
 ### Test strategy
 
@@ -384,9 +415,10 @@ remains helper-layer, never grammar.
   to the driver) and re-blessed ONCE after owner review (items
   5a/5b). The
   six predicate files are expected to survive byte-identical;
-  the module files change (skip_at_entry, crutch policy, DEF
-  order, multi-char literals, the REDEFINED `Ignore`, the
-  `state/`-prefixed kit calls). The `ig` grammar now
+  the module files change (skip at entry, crutch policy, DEF
+  order, multi-character literals, the redefined `Ignore`,
+  the `state/`-prefixed toolkit call, `Any` as bare superposition
+  + the single top-level `collapse`). The `ig` grammar now
   tests the discard-and-continue `Ignore` semantics. Thereafter
   `make emit-pred` is the byte-exact net at every item.
 - **The generated reader (acceptance files):** `make gen-accept`
@@ -551,20 +583,53 @@ item: this file + AGENTS.md. Generated code follows
     into the one string).
 
 - [ ] **4b.4. Emitter v3: render — `Any`**
-  Nested `parse-or` (site-(a)); ≥2 bare-String alts collapse into
-  ONE inlined grouped cond (the item-8 grouped-literal form); anon-
-  ymous alts lifted to index-path helpers (this is where the helper-
-  name-prefix context first becomes real); ALT ORDER IS SEMANTICS —
-  the grammar's ordering is preserved verbatim.
-  - Done when: the library loads clean; a temporary probe (deleted
-    before the commit) renders an `Any` with (a) ≥2 bare-String
-    alts, (b) one char-level alt, and (c) one anonymous non-char-
-    level alt, and the emitted source is hand-verified (the grouped
-    cond, the lifted helper name, the alt order).
+  Bare superposition at the site + the single top-level `collapse`
+  (site-(a), CHANGE 3): each Any site renders as `(| <alt 1> ...
+  <alt n>)` — one branch per alt in the grammar's ordering (ALT
+  ORDER IS SEMANTICS — preserved verbatim), NO collapse at the
+  site; the ONE `collapse` is emitted at the very top of the
+  grammar — the generated entry wraps the whole parse in
+  `(collapse state/any-fold <parse> (state/ParserError MSG <sv>))`
+  (owner ruling 2026-10-18). Anonymous alts lifted to index-path
+  helpers (the branch is a call — this is where the helper-name-
+  prefix context first becomes real); bare-String / char-level alts
+  inlined as branches. First add `any-fold` to
+  `interpreter/intrp-state.toc` next to `parse-or` (the CHANGE 3
+  kit defn). The pre-CHANGE-3 design (nested `parse-or` + the
+  grouped-literal cond) is SUPERSEDED: the grouped cond is gone,
+  the committed old WIP (`any-walk-step` / `AnyWalk` / `AnyChain` /
+  `group-cond` / the `alt-string?` / `alt-lift?` protocols) is
+  discarded, and 4b.4a was never a real blocker (owner ruling
+  2026-10-18: the WIP's 3-argument `map` call — invalid source,
+  not a new-toc bug; see 4b.4a).
+  - Done when: `interpreter/intrp-state.toc` loads clean with
+    `any-fold` present (same check as item 1); the library loads
+    clean; a temporary probe (deleted before the commit) renders an
+    `Any` with (a) ≥2 bare-String alts, (b) one char-level alt, and
+    (c) one anonymous non-char-level alt, and the emitted source is
+    hand-verified (the bare `(| ...)` at the site, the branch
+    order, the inlined branches, the lifted helper call, the single
+    top-level `collapse state/any-fold` with the default
+    `ParserError`); the emitted module builds and runs clean under
+    `new-toc`, and the probe verifies the runtime semantics
+    (leftmost-first precedence, the first complete Match wins,
+    branches right of the winner never forced).
 
-- [ ] **4b.4a. Blocker (found while probing 4b.4): new-toc codegen —
-  `(either (map …))` drops the fn-literal and the `else`**
-  `(either (map <computed-maybe> <fn>) <else>)` makes new-toc emit C
+- [x] **4b.4a. BLOCKER DISSOLVED (2026-10-18, owner ruling): NOT a
+  new-toc bug — the WIP called `map` with 3 arguments**
+  The WIP's `any-walk-step` contained `(map (.group-done acc) acc
+  (AnyWalk …))` — `map` is `defp map [v f]`, EXACTLY 2 args
+  (collection first) — so the source was INVALID, and the dropped-
+  arg C emission and the runtime abort were consequences of the
+  invalid call, not a `codegen.toc` defect (owner ruling 2026-10-
+  18). No `codegen.toc` change, no `make new-toc` needed. The
+  correct-arity 2-arg variant
+  (`scratch/codegen-either-map-fn-arity.toc`) builds and runs
+  clean (verified 2026-10-18: exit 0, malloc diff 0, remaining
+  nodes 0). The investigation below is RETRACTED as a new-toc
+  diagnosis (it was built on the invalid source) and kept as
+  history only.
+  `(either (map <computed-maybe> <fn>) <else>)` was OBSERVED to emit C
   whose `map` call site carries only ONE arg in the APP chain (the
   Maybe) — the fn-literal is dropped — and whose `either` call site
   carries only ONE arg (the map result) — the `else` is dropped. With
@@ -598,9 +663,9 @@ item: this file + AGENTS.md. Generated code follows
   must be rebuilt
   (`make new-toc`) after any fix; `toc_edit.py` is unusable on
   `codegen.toc` (compiler-internal — `check` fails, as in 4b.2a).
-  - Done when: `scratch/codegen-either-map-fn.toc` compiles and runs
-    clean (exit 0, no leak complaints), the control still runs clean,
-    and the existing regression tests still pass.
+  - Done when: (dissolved 2026-10-18 — no toolchain defect to fix;
+    the 3-arg `map` call was invalid source, and the old WIP that
+    carried it is discarded per 4b.4 / CHANGE 3).
 
 - [x] **SQ-1 (side quest, 2026-10-16). Result-discrimination kit —
   `intrp-state.toc`**
@@ -653,7 +718,7 @@ item: this file + AGENTS.md. Generated code follows
     char-level, one `Node`-tagged with a self-`Ref`, one mutual-`Ref`
     pair) and each node's emitted source is hand-verified against
     the Ctor table (skip-at-entry, the auto-loc field, the
-    grouped-literal Any, the fast/slow Many split, `Ref` as a named
+    superposition Any, the fast/slow Many split, `Ref` as a named
     call).
 
 - [ ] **4c.1. Emitter v3: name graph (cycles + topological order)**
@@ -803,6 +868,9 @@ concern the compiler project are mirrored in
 - (2026-10-10, item 4b.2a) `make tests` exits 0 even though the `nested-same-closure-codegen` probe aborts — that probe is a KNOWN-BAD codegen-bug repro whose documented expected output is `Compiler screwed up. Incomplete result. at runtime3.c:3396` (see its file header); its `.rslt` is untracked and empty. The real net is the 51 TRACKED `.rslt` files staying byte-identical (`git status regression-tests/*.rslt` empty after `make tests`).
 - (2026-10-10, item 4b.2a) new-toc silent segfaults can be file-specific and FLAKY: `regression-tests/test-bmi.toc` segfaulted (exit 139, no message) on 2 of 10 compiles with the freshly rebuilt new-toc; retries succeed. Treat as transient per the Toolchain policy and retry; a flaky file is not evidence of a deterministic break.
 - (2026-10-16, SQ-1) A new-toc LOAD does not validate protocol-impl coverage: a bodyless `defp` with a missing `extend-type` impl for a ctor, or a duplicate impl, loads clean — the failure surfaces only at dispatch time (the `No implementation of ... found for type` abort). Instance: during the SQ-1 splice, a candidate in which the `ParserIgnore` `parse-or` impl was clobbered by a duplicate `ParserError` impl passed `toc_edit.py`'s new-toc gate (exit 0). Also: `toc_edit.py` trims a snippet's trailing newline on splice (the blank line after the spliced block must be arranged via a `replace` of the last form with itself-plus-newline) — and its `parse` gate rejects a snippet that STARTS with unowned bytes (bare leading newlines), but tolerates trailing ones.
+- (2026-10-18, Any-via-superposition probe) `collapse` over a superposition implements the Any parser combinator faithfully: `(collapse any-fold (| (alt-1 s) (alt-2 s) (alt-3 s)) (Fail msg s))` with a parse-or-shaped fold fn (Match/Ignore → r, Error → acc) gives LEFTMOST-FIRST precedence (a later matching alt does not win) and TRUE short-circuit — branches right of the winning branch never run at all (verified by per-branch side-effect labels: absent for the unforced branches, present for the failing branches left of the winner, which do run). A shared deftype state ref used by every branch and the default acc is intact in every branch and in the result; protocol dispatch (`defp` + `extend-type`) works inside the collapse fold fn; the result is one plain value (dispatchable, no duplication). Scratch probe (deleted after recording): malloc diff 0, remaining nodes 0, exit 0. Consequence: the plan's site-(a) render is superseded (CHANGE 3). Owner ruling (2026-10-18): each Any site is a BARE SUPERPOSITION — no collapse at the site; the entire reader contains exactly ONE `collapse`, called at the very top of the grammar (the generated entry wraps the whole parse in `(collapse state/any-fold <parse> (state/ParserError ...))`); the site superpositions propagate up through the parse and the top-level fold picks the first complete Match. The propagating shape (as opposed to the probed per-site collapse) still needs its own probe under 4b.4. (The style doc's `collapse` decomposition bullet was corrected the same day to match the observed semantics: the deferred side is folded not at all if never used, folded first if used.)
+- (2026-10-18, Any-via-superposition probe) Protocol-impl arity is enforced at COMPILE time against the call site: an `extend-type` impl whose param list is SHORTER than the protocol call's arity fails to compile with `*** Conflicting assertions (…)` at the impl's line + `No Tail for sequence Can not contain other values from:` (repro: a 1-param impl `(m [r] r)` for a 2-arg call `(m v x)`). Every impl of a protocol must declare the FULL arg list (receiver + all closed-over values) — the kit's shape (`(parse-or [r e] r)`), not a shortened one.
+- (2026-10-18, 4b.4a retraction) The 4b.4a "new-toc codegen bug" (`(either (map …))` drops the fn-literal and the `else`) was a BOGUS diagnosis — owner ruling 2026-10-18: the WIP's `any-walk-step` called `map` with 3 ARGUMENTS, and `map` is `defp map [v f]` (exactly 2 args, collection first); the dropped-arg C emission was a consequence of the invalid call, not a `codegen.toc` defect. The correct-arity 2-arg variant runs clean (verified 2026-10-18). Before blaming new-toc for bizarre emission or a silent abort, check every call's arity against the core signatures (docs/toccata-style.md, Core API) — invalid arity produces exactly this kind of misleading symptom (cf. the `+`-takes-exactly-2-args fact).
 
 ## As-built notes
 
@@ -828,3 +896,5 @@ to check against.
 - (2026-10-11, item 4b.4, BLOCKED — new-toc codegen bug, see 4b.4a) Picked up the uncommitted Any-render WIP from the prior interrupted run (`interpreter/intrp-emit.toc`: the `alt-string?` / `alt-lift?` defaulting protocols, `group-cond`, `lift-defn`, the `AnyWalk` / `AnyChain` accumulators, `any-walk-step`, and the `grammar/Any` `render-child` impl). Verified the library loads clean (exit 134, `*** Loaded interpreter/intrp-emit.toc`, standard missing-main tail, no error lines). Wrote `interpreter/probe-4b4.toc` (an `Any` with two bare-String alts + a CharRange + an anonymous non-char-level alt); it COMPILES (build exit 0) but ABORTS at runtime: `No implementation of 'either' found for type <unknown> (6) called from interpreter/intrp-emit.toc: 277` (the `any-walk-step`'s outer `(either (map …))`). Root-caused to a new-toc codegen bug (new blocker item 4b.4a): in `(either (map <computed-maybe> <fn>) <else>)` the generated C drops the fn-literal from the `map` call's APP chain (1 arg instead of 2) and the `else` from the `either` call's APP chain (1 arg instead of 2); the fn body is not emitted into the C at all. The drop is CONTEXT-DEPENDENT — ruled out as the trigger: fn-body complexity alone (a complex then-fn still drops), preceding top-level defns (0/3/10/30 all drop), and merely loading the emitter library (the repro still drops with `intrp-emit.toc` add-ns'd). It does NOT fire when the either/map sits under an enclosing `let` whose binding the then-fn references — the exact `all-tail` shape, which is why 4b.3 built and the 4b.4 `any-walk-step` (no such enclosing `let`) does not. Minimal repro `scratch/codegen-either-map-fn.toc` (fails) + control `scratch/codegen-either-map-fn-control.toc` (runs clean) both verified this run. Also fixed a genuine Toccata arity bug in the WIP's `any-walk-step` (the inner branch was `(either (map (.group-done acc) acc (AnyWalk …)))` — `map` with 3 args, `either` with 1 — now `(either (map (.group-done acc) (fn [_] acc)) (AnyWalk …))`). The WIP is left in the worktree UNCOMMITTED (loads clean, fails at runtime); box 4b.4 left unchecked. Root cause not yet located in `codegen.toc`; unblocking 4b.4 requires fixing 4b.4a (a `codegen.toc` change + `make new-toc`), a separate task.
 
 - (2026-10-16, SQ-1 side quest, DONE) Built: the result-discrimination kit in `interpreter/intrp-state.toc` — `defp parse-then [r f]` + one `extend-type` impl per `ParserResults` ctor (Match applies the 2-arg continuation; Ignore/Error short-circuit to r), and `defp parse-or [r else-f]` + three impls (Match/Ignore return r; Error forces the else-fn), spliced after the `ParserResults` deftype via `toc_edit.py` (parse-gated snippet; insert --before the Grouping-types comment; validate-then-write). The kit text is the old plan's "Result discrimination" code verbatim except one em-dash replaced by a hyphen (pure-ASCII rule for .toc files). Plan updated to match: Files section, the Result-discrimination section (CHANGE 1), the generated-module template (header loses the kit), the test strategy's want-file change list, 4b.6 (emitted kit calls gain the `state/` prefix — the current renders emit bare names, and the emitter file was left untouched because it carries the uncommitted blocked 4b.4 WIP), and 4c.2 (header list). Verified: `toc_edit.py check` exit 0; `./new-toc interpreter/intrp-state.toc` prints `*** Loaded interpreter/intrp-state.toc`, no other error lines (standard missing-main tail). One self-inflicted slip (a cosmetic blank-line fix replaced the wrong top-level node — the `ParserIgnore` impl was temporarily clobbered by a copy of the `ParserError` impl, and new-toc's load gate passed it, see the new verified fact) — caught by re-reading the spans, restored; the owner fixed the resulting blank line by hand. No design gap.
+
+- (2026-10-18, item 4b.4a, BLOCKER DISSOLVED) Owner ruling: the 4b.4a "new-toc codegen bug" is NOT a new-toc problem at all — the WIP's `any-walk-step` called `map` with 3 arguments (`(map (.group-done acc) acc (AnyWalk …))`); `map` is `defp map [v f]` (exactly 2 args, collection first), so the source was invalid and the dropped-arg C emission was a consequence of the invalid call. The 2026-10-11 investigation (the context-dependence rulings, the `wrap-proto` narrowing) was built on the invalid source and is retracted; no `codegen.toc` change, no `make new-toc` needed. Verified 2026-10-18: the correct-arity 2-arg variant (`scratch/codegen-either-map-fn-arity.toc`) builds and runs clean (exit 0, malloc diff 0, remaining nodes 0). Item 4b.4a marked done (dissolved); the 4b.4 cross-reference updated. Note: the 2026-10-11 4b.4 BLOCKED note had already recorded and fixed the WIP's arity bug in the WIP itself — the blocker record was chasing the symptom of that same bug.
