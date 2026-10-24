@@ -175,6 +175,58 @@
 
 ;; --- Parsers -----------------------------------------------------------
 
+;; A parser is a bare fn [state] -> sup of ParserResults - a value
+;; that composes before it runs. Alternatives are bare | over parser
+;; values: applying a superposed parser to a state duplicates the run
+;; per leaf (SUP-of-functions, owner-verified 2026-10-23). The
+;; (value, state) pair rides in the sup leaves - the residual state
+;; is per-branch, so it must be per-leaf data.
+
+;; p-unit: match without consuming; the value comes from vf (a fn of
+;; the state, so make-loc can ride along).
+(defn p-unit [vf]
+  (fn [s] (ParserMatch (vf s) s)))
+
+;; p-bind: run p, then the continuation's parser on the residual
+;; state. The fn [s1] wrapper is the monad bind - hidden here, never
+;; at the call site.
+(defn p-bind [p f]
+  (fn [s0]
+    (flat-map (p s0)
+              (fn [v]
+                (fn [s1]
+                  ((f v) s1))))))
+
+;; p-alt: the union of two parsers' results - for genuinely
+;; ambiguous alternatives only. A prefix-related branch (one form a
+;; prefix of the other) must use p-branch: both branches match, and
+;; the match-truncating fold folds the right leaf first, so the
+;; shorter match would win.
+(defn p-alt [p q]
+  (| p q))
+
+;; p-branch: choose between two parsers by inspecting the state -
+;; for prefix-related forms, where a p-alt would let the shorter
+;; match win under the match-truncating fold.
+(defn p-branch [pred p q]
+  (fn [s]
+    (cond (pred s) (p s) (q s))))
+
+;; p-run: apply a (possibly superposed) parser to a state.
+(defn p-run [p s]
+  (p s))
+
+;; literal: match the input against an exact string prefix. Value:
+;; the literal. State: just past it. No match -> (|).
+(defn literal [text state]
+  (let [input (.input state)]
+    (cond (str-prefix? text input)
+          (ParserMatch text
+                       (ParserState (subs input (count text) (count input))
+                                    (.values state)))
+
+          (|))))
+
 ;; symbol: skip whitespace, then consume a run of symbol chars.
 ;; Value: the raw text. State: at the first non-symbol char.
 (defn symbol [state]
@@ -200,19 +252,17 @@
 ;; full-symbol: a symbol run, then an optional "/name" side. Value:
 ;; the ast/Symbol node [ns name loc]. State: at the first char past
 ;; the name (or past the ns when there is no slash). A slash with no
-;; name side fails (NUL).
-(defn full-symbol [state]
-  (flat-map (symbol state)
-            (fn [fst]
-              (fn [s2]
-                (cond (str-prefix? "/" (.input s2))
-                      (flat-map (symbol (take-char s2))
-                                (fn [name]
-                                  (fn [s3]
-                                    (ParserMatch (ast/Symbol fst name
-                                                             (make-loc s3))
-                                                 s3))))
-
-                      (ParserMatch (ast/Symbol "" fst (make-loc s2))
-                                   s2))))))
+;; name side fails (NUL). The ns/bare branch is a p-branch, not a
+;; p-alt - the bare form is a prefix of the ns form, and the
+;; match-truncating fold would let the shorter match win.
+(def full-symbol
+  (flat-map location
+            (fn [loc]
+              (flat-map symbol
+                        (fn [fst]
+                          (flat-map (literal "/")
+                                    (fn [_]
+                                      (map symbol
+                                           (fn [name]
+                                             (ast/Symbol fst name loc))))))))))
 

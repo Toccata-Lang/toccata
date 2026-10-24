@@ -206,8 +206,13 @@ member.
 Learned while building version (a); check these before debugging the
 reader:
 
-- **`collapse` fold order**: right leaf first, then left against the
-  accumulator (probe: `E:L acc:ACC`).
+- **`collapse` fold order**: right leaf first, then left against
+  the accumulator (probe: `E:L acc:ACC`).
+- **SUP-of-functions**: a superposition of closures applied to an
+  argument duplicates the application per leaf (owner-verified
+  2026-10-23) - alternatives can be written as bare `|` over parser
+  values, and the run-time fan-out is the machine's ordinary
+  superposition duplication.
 - **No `true`/`false`** — booleans are Maybe values; `and`/`or` are
   Maybe short-circuit protocols (`(and a b)` = `a` if `a` is None,
   else `b`).
