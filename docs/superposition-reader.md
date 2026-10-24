@@ -81,14 +81,33 @@ whitespace and `take-char` only for `"\n"`.
 
 ## Recursion: the `fix` combinator
 
-No explicit recursion in `defn` (style rule). Version (b) needs a
-`fix` combinator in `hvm-core.toc` (inline C, self-referential LAZ).
-Note: `fix` is needed for the **expression family as a whole**, not
-just `many` — the grammar is directly self-recursive through
-single (non-repeating) positions: `fn` body, `let` body and binding
-values, call head, vector/hash elements, superposition alternatives.
-Plan: one `fix` over the whole grammar family (a bundle of parser
-fns carrying their own reference); `many` falls out as just another
+No explicit recursion in `defn` (style rule) — with one sanctioned
+exception: `fix` itself, a named self-recursive defn in
+`hvm-core.toc` (right above `fold`, which is self-recursive too):
+
+```toc
+(defn fix [f]
+  (f (fix f)))
+```
+
+The self-reference goes through the defn's global REF, not a
+source-level `(a a)` self-application, so it sidesteps the
+nested-self-app compiler segfault (implementation-notes §16). The
+pure-Toccata Y-combinator was tried first and is blocked by that
+bug. Verified: compiles, runs a 3-deep recursive count-down, zero
+node/malloc leaks (scratch/probe-fix.toc).
+
+Usage: the continuation must return a function that *uses* `self`
+— `(fix (fn [self] (fn [n] ... self ...)))`, not
+`(fix (fn [self] some-fn))` (the fixed point of the latter is just
+`some-fn`, shifting the args).
+
+`fix` is needed for the **expression family as a whole**, not just
+`many` — the grammar is directly self-recursive through single
+(non-repeating) positions: `fn` body, `let` body and binding values,
+call head, vector/hash elements, superposition alternatives. Plan:
+one `fix` over the whole grammar family (a bundle of parser fns
+carrying their own reference); `many` falls out as just another
 member.
 
 ## Version (a) — done
