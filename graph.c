@@ -189,7 +189,9 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
     break;
 
   case REF: {
-    char *refName = "REF2";
+    char unknown[200];
+    sprintf(unknown, "REF: %p", (void *)(tree & ~7));
+    char *refName = unknown;
     for (unsigned i = 0; i < refsCount; i++) {
       if (refNames[i].fn == (interactionFn)(tree & ~7)) {
 	refName = refNames[i].name;

@@ -249,3 +249,9 @@ graphs/%.svg: graphs/%.dot
 .PHONY: clean-c
 clean-c:
 	rm -f $(addprefix regression-tests/, $(addsuffix .c, $(REG_TESTS))) $(addprefix regression-tests/, $(REG_TESTS))
+
+# Clean Graph files
+.PHONY: clean-g
+clean-g:
+	rm graphs/*.dot graphs/*.svg
+
