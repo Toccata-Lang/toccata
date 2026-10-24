@@ -178,6 +178,10 @@ Lessons drawn from the parser emitter's IR deletion
 
 * `+` is exactly 2-arg — nest to combine more: `(+ a (+ b c))`.
 
+* `and` / `or` are 2-argument Maybe protocols, but the compiler desugars
+  calls with more arguments into nested 2-argument calls — write them
+  flat: `(and a b c)`, not `(and a (and b c))`.
+
 * `first` on a Vector returns `Some element`, not the bare element — use
   the element by branching on the Maybe (the idiom below); never
   `extract` it. `rest` returns a Vector.
@@ -210,6 +214,15 @@ Lessons drawn from the parser emitter's IR deletion
 * Bind, don't re-look-up: when mapping over a Maybe (or a collection), use
   the value bound in the `fn` inside the branch — do not make a second
   `get`/`first` lookup that must re-assert the same index invariant.
+
+* `first` / `rest` walk a String the same way as a Vector — `None` IS
+  the end of the string. Do not test for it: no `(str= (subs s 0 1)
+  "")` guard, no `(subs s 1 (count s))` step — `(first s)` is both the
+  test and the value, `(rest s)` is the step, and the binders
+  (`flat-map`, `and`) propagate the `None`. A Maybe is a `cond` test:
+  `(cond (flat-map (first s) pred) <step> <default>)` — "no char" and
+  "char didn't match" are the same default, so write one branch, not
+  two (see `run-length` / `symbol` in interpreter/intrp-rdr.toc).
 
 * `reduce` is a left fold: `(reduce coll init f)` applies `(f acc elem)` per
   element and returns `init` for an empty collection. `reverse`, `last`, and
