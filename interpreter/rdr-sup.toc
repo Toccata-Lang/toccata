@@ -1,0 +1,161 @@
+;; interpreter/rdr-sup.toc - version-(a) verification driver.
+;;
+;; Exercises the superposition monad mechanics with trivial
+;; hand-rolled parsers (raw str-prefix? checks on the state's input,
+;; consuming via take-char). Every test case runs through the single
+;; top-level collapse with the pick-result fold and the line-0 seed:
+;;   t1 unit: a bare ParserMatch passes through
+;;   t2 bind: a flat-map chains a second parser after the first
+;;   t3 alt: one branch fails (NUL) and the other matches; both fail
+;;      -> empty -> the seed
+;;   t4 error: a ParserError leaf short-circuits the flat-map chain
+;;   t5 pick-result: a match truncates; the deeper (larger-line)
+;;      error wins; a line tie keeps the left leaf; empty -> the seed
+;;
+;; The lazy machine only runs side effects the final result depends
+;; on, so main's result is a strict combination of the check results.
+
+(add-ns rdr (module "intrp-rdr.toc"))
+
+;; --- Result inspection -----------------------------------------------
+;;
+;; Tag protocol + guarded per-ctor extraction (union-typed values).
+
+(defp res-kind [r] "match")
+
+(extend-type rdr/ParserError
+  (res-kind [e]
+    "error"))
+
+(defp match-val [r] "")
+
+(extend-type rdr/ParserMatch
+  (match-val [m]
+    (.value m)))
+
+(defp match-input [r] "")
+
+(extend-type rdr/ParserMatch
+  (match-input [m]
+    (.input (.state m))))
+
+(defp err-msg [r] "")
+
+(extend-type rdr/ParserError
+  (err-msg [e]
+    (.msg e)))
+
+(defp err-input [r] "")
+
+(extend-type rdr/ParserError
+  (err-input [e]
+    (.input (.state e))))
+
+;; --- Trivial hand-rolled parsers --------------------------------------
+
+(defn parse-a [s]
+  (let [input (.input s)]
+    (cond (str-prefix? "a" input)
+          (rdr/ParserMatch "a" (rdr/take-char s))
+
+          (|))))
+
+(defn parse-b [s]
+  (let [input (.input s)]
+    (cond (str-prefix? "b" input)
+          (rdr/ParserMatch "b" (rdr/take-char s))
+
+          (|))))
+
+;; --- Checks ------------------------------------------------------------
+;;
+;; check-match / check-error assert on a collapsed result and abort on
+;; mismatch.
+
+;; match-ok / error-ok: the expected-shape predicates. Maybe-valued:
+;; None = not ok. `and` is a 2-arg Maybe protocol, and and/or are
+;; special forms that desugar to nested conds - so the and algebra
+;; lives at defn-body level, never inside a cond clause (the
+;; malformed-cond hazard, see the plan's verified facts).
+
+(defn match-ok [res expect-val expect-input]
+  (and (not (str= (res-kind res) "error"))
+       (and (str= (match-val res) expect-val)
+            (str= (match-input res) expect-input))))
+
+(defn error-ok [res expect-msg expect-input]
+  (and (str= (res-kind res) "error")
+       (and (str= (err-msg res) expect-msg)
+            (str= (err-input res) expect-input))))
+
+(defn check-match [name res expect-val expect-input]
+  (let [kind (res-kind res)]
+    (cond (match-ok res expect-val expect-input)
+          (println name "OK")
+
+          (abort (str name " FAIL got: " kind " " (match-val res) " "
+                      (match-input res) " " (err-msg res))))))
+
+(defn check-error [name res expect-msg expect-input]
+  (let [kind (res-kind res)]
+    (cond (error-ok res expect-msg expect-input)
+          (println name "OK")
+
+          (abort (str name " FAIL got: " kind " " (err-msg res) " "
+                      (err-input res))))))
+
+;; --- Test cases ---------------------------------------------------------
+
+(defn main [argv]
+  (let [seed (rdr/ParserError "no parse" (rdr/make-state "" "rdr-sup.toc" 0))]
+    (vector (let [s (rdr/make-state "rest" "rdr-sup.toc" 1)
+                  res (collapse rdr/pick-result (rdr/ParserMatch "v" s) seed)]
+              (check-match "t1-unit" res "v" "rest"))
+            (let [s (rdr/make-state "ab" "rdr-sup.toc" 1)
+                  res (collapse rdr/pick-result
+                                (flat-map (parse-a s)
+                                          (fn [a-val] parse-b))
+                                seed)]
+              (check-match "t2-bind" res "b" ""))
+            (let [s (rdr/make-state "b" "rdr-sup.toc" 1)
+                  res (collapse rdr/pick-result
+                                (| (parse-a s) (parse-b s))
+                                seed)]
+              (check-match "t3-alt" res "b" ""))
+            (let [s (rdr/make-state "c" "rdr-sup.toc" 1)
+                  res (collapse rdr/pick-result
+                                (| (parse-a s) (parse-b s))
+                                seed)]
+              (check-error "t3-both-fail" res "no parse" ""))
+            (let [s (rdr/make-state "ab" "rdr-sup.toc" 1)
+                  res (collapse rdr/pick-result
+                                (flat-map (rdr/ParserError "boom" s)
+                                          (fn [v] parse-b))
+                                seed)]
+              (check-error "t4-error" res "boom" "ab"))
+            (let [s (rdr/make-state "" "rdr-sup.toc" 1)
+                  res (collapse rdr/pick-result
+                                (| (rdr/ParserMatch "m" s)
+                                   (rdr/ParserError "late"
+                                                    (rdr/make-state "" "rdr-sup.toc" 9)))
+                                seed)]
+              (check-match "t5-match-truncates" res "m" ""))
+            (let [res (collapse rdr/pick-result
+                                (| (rdr/ParserError "shallow"
+                                                    (rdr/make-state "" "rdr-sup.toc" 3))
+                                   (rdr/ParserError "deep"
+                                                    (rdr/make-state "" "rdr-sup.toc" 10)))
+                                seed)]
+              (check-error "t5-deeper-wins" res "deep" ""))
+            (let [res (collapse rdr/pick-result
+                                (| (rdr/ParserError "first"
+                                                    (rdr/make-state "" "rdr-sup.toc" 7))
+                                   (rdr/ParserError "second"
+                                                    (rdr/make-state "" "rdr-sup.toc" 7)))
+                                seed)]
+              ;; the collapse fold runs right leaf first, then the left
+              ;; leaf against the accumulator; ties keep the current
+              ;; (left) leaf
+              (check-error "t5-tie-left" res "first" ""))
+            (let [res (collapse rdr/pick-result (|) seed)]
+              (check-error "t5-empty-seed" res "no parse" "")))))

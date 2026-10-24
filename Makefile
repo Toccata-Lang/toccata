@@ -132,6 +132,15 @@ rdr-hvmcore: new-toc interpreter/intrp-ast.toc interpreter/intrp-rdr.toc interpr
 	$(CC) $(CFLAGS) -o rdr-hvmcore $(TOC_FLAGS) $(LDFLAGS) rdr-hvmcore.c new.c runtime3.c graph.c
 	./rdr-hvmcore
 
+.PHONY: rdr-sup
+rdr-sup: new-toc interpreter/intrp-rdr.toc interpreter/rdr-sup.toc hvm-core.toc
+	./new-toc interpreter/rdr-sup.toc > rdr-sup.tmp
+	awk '/^#$$/ { printf "#line %d \"m.c\"\n", NR+1, "rdr-sup.c"; next; } { print; }' rdr-sup.tmp > rdr-sup.c
+	clang-format -i rdr-sup.c
+	rm rdr-sup.tmp
+	$(CC) $(CFLAGS) -o rdr-sup $(TOC_FLAGS) $(LDFLAGS) rdr-sup.c new.c runtime3.c graph.c
+	./rdr-sup
+
 # Parser-generator drivers (docs/parser-generator-plan.md)
 .PHONY: emit-pred
 emit-pred: new-toc interpreter/intrp-grammar.toc interpreter/intrp-emit.toc interpreter/emit-pred.toc hvm-core.toc
