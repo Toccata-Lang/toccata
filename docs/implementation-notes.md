@@ -421,3 +421,40 @@ representation (new-compiler-plan.md, phase-2 item 7).
 - **DUP works on values**: `interactions[DUP]` is `dupLeaf` for
   VAL/REF/I60 and `negVar` for VAR — the compiler DUPs a source value that
   is used more than once.
+
+## 16. new-toc segfaults on nested self-application [observed]
+
+2026-10-23, while trying to write the `fix` combinator in pure Toccata
+for the superposition reader (docs/superposition-reader.md). `new-toc`
+segfaults (exit 139, zero diagnostics, 5/5 reproducible) when compiling a
+self-application whose lambda's body itself contains a self-application.
+
+Minimal repro (the full `fix` shape is `scratch/probe-fix.toc`):
+
+```toc
+(defn t11 [f]
+  (let [a (fn [x] (x x))]
+    (a a)))
+
+(defn main [argv]
+  0)
+```
+
+Bisect table — each row a standalone file with a `main`:
+
+| shape | result |
+|---|---|
+| `(let [a (fn [x] (f x))] (a a))` — single self-app | compiles |
+| double-use of a captured var in a nested closure, no self-app | compiles |
+| `(a a)` + `(str x x)` in the body — double-use, not self-app | compiles |
+| `(a a)` + closure calling `x` twice: `(x 1) (x 2)` | compiles |
+| `(x x)` inside a closure, no outer self-app | compiles |
+| **`(a a)` whose body contains `(x x)`, closure or not** | **segfault** |
+
+One level of self-application is fine; nesting a second one crashes the
+compiler. Any fixed-point combinator needs self-application by
+construction (the Y-combinator has the outer `(a a)` and the inner
+`(x x)`), so a pure-Toccata `fix` is blocked by this bug. Working around
+it is the point of the inline-C `fix` (self-referential LAZ built
+directly in C, never through codegen) — see
+docs/superposition-reader.md.
