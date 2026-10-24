@@ -2,9 +2,9 @@
 ;;
 ;; Exercises the superposition monad mechanics with trivial
 ;; hand-rolled parsers (raw str-prefix? checks on the state's input,
-;; consuming via take-char) plus the library's symbol parser. Every
-;; test case runs through the single top-level collapse with the
-;; pick-result fold and the line-0 seed (parse-failed):
+;; consuming via take-char) plus the library's symbol and full-symbol
+;; parsers. Every test case runs through the single top-level collapse
+;; with the pick-result fold and the line-0 seed (parse-failed):
 ;;   t1 unit: a bare ParserMatch passes through
 ;;   t2 bind: a flat-map chains a second parser after the first
 ;;   t3 alt: one branch fails (NUL) and the other matches; both fail
@@ -16,13 +16,17 @@
 ;;      whitespace, special chars, stop at space, / stops the run
 ;;      (a start char, not a continue char), and three NUL failures
 ;;      (paren, digit, empty input) -> the seed
+;;   t14-t19 full-symbol: the library's full-symbol parser - bare
+;;      symbol (empty ns), ns/name split at /, leading whitespace,
+;;      stop at space, and two NUL failures (dangling slash, non-start
+;;      char) -> the seed
 ;;
 ;; main's body is a bare sequence: each check is a side-effecting
 ;; workflow, and the machine runs every reachable side effect at
 ;; least once, not in source order. A failing check aborts, so the
 ;; run passes iff all checks pass.
-
 (add-ns rdr (module "intrp-rdr.toc"))
+(add-ns ast (module "intrp-ast.toc"))
 
 ;; --- Result inspection -----------------------------------------------
 ;;
@@ -57,6 +61,18 @@
 (extend-type rdr/ParserError
   (err-input [e]
     (.input (.state e))))
+
+(defp sym-ns [v] "")
+
+(extend-type ast/Symbol
+  (sym-ns [v]
+    (.ns v)))
+
+(defp sym-name [v] "")
+
+(extend-type ast/Symbol
+  (sym-name [v]
+    (.sym-name v)))
 
 ;; --- Trivial hand-rolled parsers --------------------------------------
 
@@ -111,12 +127,36 @@
           (abort (str name " FAIL got: " kind " " (err-msg res) " "
                       (err-input res))))))
 
+(defn symbol-ok [res expect-ns expect-name expect-input]
+  (let [val (match-val res)]
+    (and (not (str= (res-kind res) "error"))
+         (str= (sym-ns val) expect-ns)
+         (str= (sym-name val) expect-name)
+         (str= (match-input res) expect-input))))
+
+(defn check-symbol [name res expect-ns expect-name expect-input]
+  (let [kind (res-kind res)
+        val (match-val res)]
+    (cond (symbol-ok res expect-ns expect-name
+                     expect-input)
+          (println name "OK")
+
+          (abort (str name " FAIL got: " kind " " (sym-ns val) "/"
+                      (sym-name val) " " (match-input res))))))
+
 (def parse-failed (rdr/ParserError "no parse" (rdr/make-state "" "rdr-sup.toc" 0)))
 
 ;; run: the whole symbol parse over a fresh state, one collapse.
 (defn run [input]
   (collapse rdr/pick-result
             (rdr/symbol (rdr/make-state input "rdr-sup.toc" 1))
+            parse-failed))
+
+;; run-full: the whole full-symbol parse over a fresh state, one
+;; collapse.
+(defn run-full [input]
+  (collapse rdr/pick-result
+            (rdr/full-symbol (rdr/make-state input "rdr-sup.toc" 1))
             parse-failed))
 
 (defn parse-result [p]
@@ -168,9 +208,15 @@
   (check-match "t8-sym-specials" (run "a.b-c?d!e") "a.b-c?d!e" "")
   (check-match "t9-sym-stop" (run "foo bar") "foo" " bar")
   ;; / is a symbol-start char but not a continue char - the
-  ;; run stops at it; the full-symbol layer (not yet written)
-  ;; reads the second side
+  ;; run stops at it - the full-symbol layer reads the
+  ;; second side
   (check-match "t10-sym-slash-stops" (run "ns/sym") "ns" "/sym")
   (check-error "t11-sym-paren" (run "(foo)") "no parse" "")
   (check-error "t12-sym-digit" (run "42") "no parse" "")
-  (check-error "t13-sym-empty" (run "") "no parse" ""))
+  (check-error "t13-sym-empty" (run "") "no parse" "")
+  (check-symbol "t14-full-basic" (run-full "foo") "" "foo" "")
+  (check-symbol "t15-full-ns" (run-full "ns/sym") "ns" "sym" "")
+  (check-symbol "t16-full-ws" (run-full "  ns/sym  (x)") "ns" "sym" "  (x)")
+  (check-symbol "t17-full-stop" (run-full "foo bar") "" "foo" " bar")
+  (check-error "t18-full-dangling" (run-full "ns/") "no parse" "")
+  (check-error "t19-full-nostart" (run-full "(x)") "no parse" ""))

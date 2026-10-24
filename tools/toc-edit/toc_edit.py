@@ -83,6 +83,11 @@ _CLEAN_LINE_PREFIXES = (
     # not an error (observed 2026-09-27 on interpreter/intrp-grammar.toc's
     # `sub-expression` declaration; the file loads clean).
     "*** declare ",
+    # Printed when a module already compiled in this run is delivered from
+    # the cache (compiler.toc `add-mod`); info line, not an error
+    # (observed 2026-10-23 on a driver importing a module that itself
+    # imports a third module; the candidate loads clean).
+    "*** delivering ",
 )
 
 
