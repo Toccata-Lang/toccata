@@ -63,7 +63,15 @@
 
           (skip-comment (drop-char state)))))
 
-;; skip-whitespace: spaces, tabs, newlines, carriage returns, and
+(def comment
+  (Parser (fn [state]
+            (let [old-input (.input state)
+                  new-state (skip-comment state)]
+              (ParserMatch (subs old-input 0 (- (count old-input)
+                                                (count (.input new-state))))
+                           new-state)))))
+
+;; kip-whitespace: spaces, tabs, newlines, carriage returns, and
 ;; comments.
 (defn skip-whitespace [state]
   (let [input (.input state)]
@@ -85,6 +93,10 @@
             (skip-whitespace new-state))
 
           state)))
+
+(def whitespace
+  (Parser (fn [state]
+            (ParserMatch "" (skip-whitespace state)))))
 
 ;; pick-result: the fold of the single top-level collapse. A match
 ;; truncates the fold; errors merge, keeping the error with the
@@ -175,79 +187,51 @@
 
 ;; --- Parsers -----------------------------------------------------------
 
-;; A parser is a bare fn [state] -> sup of ParserResults - a value
-;; that composes before it runs. Alternatives are bare | over parser
-;; values: applying a superposed parser to a state duplicates the run
-;; per leaf (SUP-of-functions, owner-verified 2026-10-23). The
-;; (value, state) pair rides in the sup leaves - the residual state
-;; is per-branch, so it must be per-leaf data.
-
-;; p-unit: match without consuming; the value comes from vf (a fn of
-;; the state, so make-loc can ride along).
-(defn p-unit [vf]
-  (fn [s] (ParserMatch (vf s) s)))
-
-;; p-bind: run p, then the continuation's parser on the residual
-;; state. The fn [s1] wrapper is the monad bind - hidden here, never
-;; at the call site.
-(defn p-bind [p f]
-  (fn [s0]
-    (flat-map (p s0)
-              (fn [v]
-                (fn [s1]
-                  ((f v) s1))))))
-
-;; p-alt: the union of two parsers' results - for genuinely
-;; ambiguous alternatives only. A prefix-related branch (one form a
-;; prefix of the other) must use p-branch: both branches match, and
-;; the match-truncating fold folds the right leaf first, so the
-;; shorter match would win.
-(defn p-alt [p q]
-  (| p q))
-
-;; p-branch: choose between two parsers by inspecting the state -
-;; for prefix-related forms, where a p-alt would let the shorter
-;; match win under the match-truncating fold.
-(defn p-branch [pred p q]
-  (fn [s]
-    (cond (pred s) (p s) (q s))))
-
-;; p-run: apply a (possibly superposed) parser to a state.
-(defn p-run [p s]
-  (p s))
+(deftype Parser [f]
+  ;; 'f' is a function that takes a state value and returns a ParserMatch value
+  (map [p m-f]
+    (Parser (fn [s]
+              (map (f s) m-f))))
+  (flat-map [p m-f]
+    (Parser (fn [s]
+              (flat-map (f s) m-f)))))
 
 ;; literal: match the input against an exact string prefix. Value:
 ;; the literal. State: just past it. No match -> (|).
-(defn literal [text state]
-  (let [input (.input state)]
-    (cond (str-prefix? text input)
-          (ParserMatch text
-                       (ParserState (subs input (count text) (count input))
-                                    (.values state)))
+(defn literal [text]
+  (Parser (fn [state]
+            (let [input (.input state)]
+              (cond (str-prefix? text input)
+                    (ParserMatch text
+                                 (ParserState (subs input (count text) (count input))
+                                              (.values state)))
 
-          (|))))
+                    (|))))))
+
+;; location: the ast/Location for the state's file and line.
+(def location
+  (Parser (fn [state]
+            (either (map (get (.values state) 'file)
+                         (fn [f]
+                           (ParserMatch (ast/Location f (state-line state))
+                                        state)))
+                    (abort "make-loc: state has no file")))))
 
 ;; symbol: skip whitespace, then consume a run of symbol chars.
 ;; Value: the raw text. State: at the first non-symbol char.
-(defn symbol [state]
-  (let [s (skip-whitespace state)
-        input (.input s)]
-    (cond (and (first input)
-               (symbol-start? input))
-          (let [len (run-length input symbol-continue?)]
-            (cond (< 0 len)
-                  (ParserMatch (subs input 0 len)
-                               (ParserState (subs input len (count input))
-                                            (.values s)))
-                  (|)))
+(def symbol
+  (Parser (fn [state]
+            (let [input (.input s)]
+              (cond (and (first input)
+                         (symbol-start? input))
+                    (let [len (run-length input symbol-continue?)]
+                      (cond (< 0 len)
+                            (ParserMatch (subs input 0 len)
+                                         (ParserState (subs input len (count input))
+                                                      (.values s)))
+                            (|)))
 
-          (|))))
-
-;; make-loc: the ast/Location for the state's file and line.
-(defn make-loc [state]
-  (either (map (get (.values state) 'file)
-               (fn [f] (ast/Location f (state-line state))))
-          (abort "make-loc: state has no file")))
+                    (|))))))
 
 ;; full-symbol: a symbol run, then an optional "/name" side. Value:
 ;; the ast/Symbol node [ns name loc]. State: at the first char past
@@ -256,13 +240,16 @@
 ;; p-alt - the bare form is a prefix of the ns form, and the
 ;; match-truncating fold would let the shorter match win.
 (def full-symbol
-  (flat-map location
-            (fn [loc]
-              (flat-map symbol
-                        (fn [fst]
-                          (flat-map (literal "/")
-                                    (fn [_]
-                                      (map symbol
-                                           (fn [name]
-                                             (ast/Symbol fst name loc))))))))))
+  (flat-map whitespace
+            (fn [_]
+              (flat-map location
+                        (fn [loc]
+                          (flat-map symbol
+                                    (fn [fst]
+                                      (| (flat-map (literal "/")
+                                                   (fn [_]
+                                                     (map symbol
+                                                          (fn [name]
+                                                            (ast/Symbol fst name loc)))))
+                                         (ParserMatch (ast/Symbol no-symbol name loc))))))))))
 
