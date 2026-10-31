@@ -88,6 +88,9 @@ _CLEAN_LINE_PREFIXES = (
     # (observed 2026-10-23 on a driver importing a module that itself
     # imports a third module; the candidate loads clean).
     "*** delivering ",
+    # Printed on every load; info line, not an error (observed 2026-10-25
+    # on interpreter/rdr-sup.toc; the file loads clean).
+    "*** Dynamic DUP labels start at: ",
 )
 
 
