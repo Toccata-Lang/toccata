@@ -52,6 +52,7 @@ extern a64 waiting;
 
 // Global VM state
 extern unsigned nodeCount;
+extern long unsigned minDupLabel;
 extern FILE *dotFile;
 extern a64 glblAlloced;
 extern a64 buffEnd;

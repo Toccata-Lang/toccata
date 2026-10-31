@@ -1182,6 +1182,15 @@ void dupSup(Term dup, Term sup) {
 }
 
 // Application-Value interaction
+long unsigned dupLabel = 0;
+
+unsigned newDupLabel() {
+  if (dupLabel < minDupLabel)
+    dupLabel = minDupLabel;
+
+  return dupLabel++;
+}
+
 void appVal(Term app, Term val) {
   if (((Value *)val)->type != TermType) {
     char msg[200];
@@ -1193,16 +1202,15 @@ void appVal(Term app, Term val) {
     Term trm = swap(tv->trmLoc, NUL);
     if (termTag(trm) == VAR)
       trm = take(termLoc(trm));
-    pushRedex(app, trm);
+    interact(app, trm);
   } else {
-    Term dup = makePair(DUP, 0, SUB, SUB);
-    Term sub = makePair(SUB, 7, app, newTerm(VAR, 0, portLoc(1, dup)));
-    swap(portLoc(1, dup), sub);
-
-    Term trm = swap(tv->trmLoc, newTerm(VAR, 0, portLoc(2, dup)));
+    Term dup = makePair(DUP, newDupLabel(), SUB, app);
+    Term trm = swap(tv->trmLoc, newTerm(VAR, 0, portLoc(1, dup)));
+    // TODO: make sure we correctly handle SUB/VAR, etc.
+    // aka, a race condition
     if (termTag(trm) == VAR)
       trm = take(termLoc(trm));
-    pushRedex(dup, trm);
+    interact(dup, trm);
   }
   dec_and_free(val, 1);
   return;

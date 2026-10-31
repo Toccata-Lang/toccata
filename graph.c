@@ -1,4 +1,5 @@
 
+#include <runtime3.h>
 #include "new.h"
 #include <string.h>
 
@@ -167,113 +168,129 @@ unsigned graphSubDown(unsigned graphNum, unsigned nodeNum, Term tree) {
     break;
 
   case VAL:
-    if (tree == VOID)
+    if (tree == VOID) {
       fprintf(dotFile, noOutline, graphNum, nodeNum, "VOID");
-    /*
-    else if (((Value *)tree)->type == StringBufferType) {
-      int len = (int)((String *)tree)->len;
-      len = len > 10 ? 10 : len;
-      fprintf(dotFile, "x%d_%x [label=\"'%-.*s'\",  height=0.4, width=0.4, fixedsize=true, shape=plaintext]\n",
-	      graphNum, nodeNum, len, ((String *)tree)->buffer);
-    } else if (((Value *)tree)->type == SubStringType) {
-      ReifiedVal *ss = (ReifiedVal *)tree;
-      String *parent = (String *)ss->impls[0];
-      long start = getI60(ss->impls[1]);
-      int len = (int)getI60(ss->impls[2]);
-      len = len > 10 ? 10 : len;
-      fprintf(dotFile, "x%d_%x [label=\"'%-.*s'\",  height=0.4, width=0.4, fixedsize=true, shape=plaintext]\n",
-	      graphNum, nodeNum, len, &parent->buffer[start]);
-    } else
-    */
-      fprintf(dotFile, noOutline, graphNum, nodeNum, nodeLabels[t]);
-    break;
-
-  case REF: {
-    char unknown[200];
-    sprintf(unknown, "REF: %p", (void *)(tree & ~7));
-    char *refName = unknown;
-    for (unsigned i = 0; i < refsCount; i++) {
-      if (refNames[i].fn == (interactionFn)(tree & ~7)) {
-	refName = refNames[i].name;
-	break;
-      }
-    }
-    fprintf(dotFile,   "x%d_%x [label=\"%s\", shape=plaintext]\n",
-	    graphNum, nodeNum, refName);
-  }
-    break;
-
-  case SUB: {
-    fprintf(dotFile, "x%d_%x [label=\"%s\",  height=0.22, width=0.22, fixedsize=true,  shape=circle]\n",
-	    graphNum, nodeNum, "");
-    graphNode *gn = &nodeStack[nodeCount++];
-    if (nodeCount > 999)
-      BOOM("nodeCount!");
-    gn->trm = tree;
-    gn->node = nodeNum;
-
-    downBranch(tree, 1, graphNum, nodeNum);
-    downBranch(tree, 2, graphNum, nodeNum);
-  }
-    break;
-
-  case SUP:
-  case DUP: 
-  case OPX:
-  case OPY:
-  case LAZ:
-  case LAM:
-  case APP: {
-    Lab lab = termLab(tree);
-    if (t == DUP || t == SUP || t == LAM) {
-      snprintf(xLbl, 95, "%x:\n%d", nodeNum, lab);
-    } else
-      snprintf(xLbl, 95, "%x:", nodeNum);
-
-    if (t == OPX || t == OPY) {
-      fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, opLabels[lab], 0, xLbl);
     } else {
-      fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, nodeLabels[t], 0, xLbl);
-    }
-    graphNode *gn = &nodeStack[nodeCount++];
-    if (nodeCount > 999)
-      BOOM("nodeCount!");
-    gn->trm = tree;
-    gn->node = nodeNum;
+	/*
+	  else if (((Value *)tree)->type == StringBufferType) {
+	  int len = (int)((String *)tree)->len;
+	  len = len > 10 ? 10 : len;
+	  fprintf(dotFile, "x%d_%x [label=\"'%-.*s'\",  height=0.4, width=0.4, fixedsize=true, shape=plaintext]\n",
+	  graphNum, nodeNum, len, ((String *)tree)->buffer);
+	  } else if (((Value *)tree)->type == SubStringType) {
+	  ReifiedVal *ss = (ReifiedVal *)tree;
+	  String *parent = (String *)ss->impls[0];
+	  long start = getI60(ss->impls[1]);
+	  int len = (int)getI60(ss->impls[2]);
+	  len = len > 10 ? 10 : len;
+	  fprintf(dotFile, "x%d_%x [label=\"'%-.*s'\",  height=0.4, width=0.4, fixedsize=true, shape=plaintext]\n",
+	  graphNum, nodeNum, len, &parent->buffer[start]);
+	  } else
+	*/
+	char lbl[30];
+	Value *v = (Value *)tree;
+	if (v->type == TermType) {
+	  sprintf(lbl, "TermVal %d", v->refs);
+	  fprintf(dotFile, noOutline, graphNum, nodeNum, lbl);
 
-    unsigned leftNode = 65536;
-    unsigned rightNode = 65536;
-    if (t == DUP) {
-      Term b1 = get(portLoc(1, tree));
-      Tag bt1 = termTag(b1);
-      if (bt1 != LAZ || tree == get(portLoc(1, b1))) {
-	leftNode = downBranch(tree, 1, graphNum, nodeNum);
+	  TermVal *tv = (TermVal *)tree;
+	  unsigned leftNode = graphSubDown(graphNum, tv->trmLoc, get(tv->trmLoc));
+	  fprintf(dotFile, "x%d_%x:s -- x%d_%x:n\n", graphNum, nodeNum, graphNum, leftNode);
+	} else {
+	  sprintf(lbl, "%s %d %ld", nodeLabels[t], v->refs, v->type);
+	  fprintf(dotFile, noOutline, graphNum, nodeNum, lbl);
+	}
       }
+      break;
 
-      Term b2 = get(portLoc(2, tree));
-      Tag bt2 = termTag(b2);
-      if (bt2 != LAZ || tree == get(portLoc(2, b2))) {
+    case REF: {
+      char unknown[200];
+      sprintf(unknown, "REF: %p", (void *)(tree & ~7));
+      char *refName = unknown;
+      for (unsigned i = 0; i < refsCount; i++) {
+	if (refNames[i].fn == (interactionFn)(tree & ~7)) {
+	  refName = refNames[i].name;
+	  break;
+	}
+      }
+      fprintf(dotFile,   "x%d_%x [label=\"%s\", shape=plaintext]\n",
+	      graphNum, nodeNum, refName);
+    }
+      break;
+
+    case SUB: {
+      fprintf(dotFile, "x%d_%x [label=\"%s\",  height=0.22, width=0.22, fixedsize=true,  shape=circle]\n",
+	      graphNum, nodeNum, "");
+      graphNode *gn = &nodeStack[nodeCount++];
+      if (nodeCount > 999)
+	BOOM("nodeCount!");
+      gn->trm = tree;
+      gn->node = nodeNum;
+
+      downBranch(tree, 1, graphNum, nodeNum);
+      downBranch(tree, 2, graphNum, nodeNum);
+    }
+      break;
+
+    case SUP:
+    case DUP: 
+    case OPX:
+    case OPY:
+    case LAZ:
+    case LAM:
+    case APP: {
+      Lab lab = termLab(tree);
+      if (t == DUP || t == SUP || t == LAM) {
+	snprintf(xLbl, 95, "%x:\n%d", nodeNum, lab);
+      } else
+	snprintf(xLbl, 95, "%x:", nodeNum);
+
+      if (t == OPX || t == OPY) {
+	fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, opLabels[lab], 0, xLbl);
+      } else if (t == SUP || t == DUP) {
+	fprintf(dotFile, "x%d_%x [label=\"%s\",  height=0.5, width=0.5, fixedsize=true,  shape=triangle, color=red, orientation=%d, xlabel=\"%s\"]\n" , graphNum, nodeNum, nodeLabels[t], 0, xLbl);
+      } else {
+	fprintf(dotFile, nodeXlblFormat, graphNum, nodeNum, nodeLabels[t], 0, xLbl);
+      }
+      graphNode *gn = &nodeStack[nodeCount++];
+      if (nodeCount > 999)
+	BOOM("nodeCount!");
+      gn->trm = tree;
+      gn->node = nodeNum;
+
+      unsigned leftNode = 65536;
+      unsigned rightNode = 65536;
+      if (t == DUP) {
+	Term b1 = get(portLoc(1, tree));
+	Tag bt1 = termTag(b1);
+	if (bt1 != LAZ || tree == get(portLoc(1, b1))) {
+	  leftNode = downBranch(tree, 1, graphNum, nodeNum);
+	}
+
+	Term b2 = get(portLoc(2, tree));
+	Tag bt2 = termTag(b2);
+	if (bt2 != LAZ || tree == get(portLoc(2, b2))) {
+	  rightNode = downBranch(tree, 2, graphNum, nodeNum);
+	}
+      } else {
+	leftNode = downBranch(tree, 1, graphNum, nodeNum);
 	rightNode = downBranch(tree, 2, graphNum, nodeNum);
       }
-    } else {
-      leftNode = downBranch(tree, 1, graphNum, nodeNum);
-      rightNode = downBranch(tree, 2, graphNum, nodeNum);
+      /*
+	if (leftNode != 65536 && rightNode != 65536)
+	fprintf(dotFile, "rank=same {x%d_%x, x%d_%x}\n",
+	graphNum, leftNode, graphNum, rightNode);
+	// */
     }
-/*
-    if (leftNode != 65536 && rightNode != 65536)
-      fprintf(dotFile, "rank=same {x%d_%x, x%d_%x}\n",
-	      graphNum, leftNode, graphNum, rightNode);
-// */
-  }
-    break;
+      break;
     
-  default: {
-    fprintf(dotFile,   "x%d_%x [label=\"%s\", shape=plaintext]\n",
-	    graphNum, nodeNum, tagStr(t));
-  }
-    break;
+    default: {
+      fprintf(dotFile,   "x%d_%x [label=\"%s\", shape=plaintext]\n",
+	      graphNum, nodeNum, tagStr(t));
+    }
+      break;
     
-  }
+    }
   return nodeNum;
 }
 

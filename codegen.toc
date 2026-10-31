@@ -258,7 +258,31 @@
                                                           ", args);\n"
                                                           "  interact(args, " (.var ast) ");\n"
                                                           "}\n}\n"]))]
-                                  (str "newRef(" new-var ")")))
+                                  (do
+                                    ;; Add a StaticArity value to the core namespace so that this anon fn will
+                                    ;; be named in graphs with the line number it was created at.
+                                    (send b/modules
+                                          (fn [mods]
+                                            (either (update-in
+                                                     mods [b/core]
+                                                     (fn [ss]
+                                                       (let [[_ mod]
+                                                             ((se/update-in-val [.namespaces c/no-symbol .values]
+                                                                                (fn [values-list]
+                                                                                  (let [sym (c/tag (str ast " " (.line loc)))
+                                                                                        val (b/StaticArity (ast/fn-arity [] "" [ast])
+                                                                                                           new-var new-var []
+                                                                                                           c/top-type)]
+                                                                                    (either (map (first values-list)
+                                                                                                 (fn [values]
+                                                                                                   (-> values
+                                                                                                       (assoc sym val)
+                                                                                                       (cons (rest values-list)))))
+                                                                                            (list {sym val}))))) ss)]
+                                                         mod)))
+                                                    mods)))
+
+                                    (str "newRef(" new-var ")"))))
 
                               (se/state-error (.var ast)))))
             (fn [c]
@@ -443,9 +467,10 @@
                                                                  ["\nTerm " dupe-var ";\n"
                                                                   var " = dupeArg(" var,
                                                                   ", &" dupe-var ", "
-                                                                  (cond (.static-arity params)
-                                                                        (new-int b/dup-labels)
-                                                                        "0")
+                                                                  ;; TODO: we need to eliminate as many non-zero
+                                                                  ;; dup labels as possible to save values for
+                                                                  ;; dynamic dup labels
+                                                                  (new-int b/dup-labels)
                                                                   ");\n"]))))))
 
                                         ["swap(termLoc(" var "), ERA);\n"])
@@ -1038,11 +1063,10 @@
                                            "{constructFn, \"construct\"}"])
                       _ (se/traverse refs (fn [[sym val]]
                                             (se/try
-                                              (se/update-val .decl
-                                                             (fn [decl]
-                                                               [decl ",\n"
-                                                                "{" (.c-fn val) ", \""
-                                                                sym "\"}"]))
+                                              (se/update-val .decl (fn [decl]
+                                                                     [decl ",\n"
+                                                                      "{" (.c-fn val) ", \""
+                                                                      sym "\"}"]))
                                               (fn [err]
                                                 (b/status (.val err))
                                                 (b/wait-for-err-out)
@@ -1114,6 +1138,7 @@
                             mods))
         mods (extract mod-prom)
         dyn-glbls (flat-map (vals mods) .glbl-exprs)]
+    (b/status "Dynamic DUP labels start at:" (new-int b/dup-labels))
     (cond (instance? se/Error code-context)
           (do
             (b/status (.val code-context))
@@ -1142,6 +1167,7 @@
                     "}\n"
 
                     "Term mainFn = newRef(" main-fn ");\n"
+                    "long unsigned minDupLabel = " (new-int b/dup-labels) ";\n"
                     "int typeCount = " (extract b/type-counter) ";\n"))
     (deliver done-promise 'done)
     code-context))
