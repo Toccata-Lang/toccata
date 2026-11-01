@@ -2,9 +2,10 @@
 ;;
 ;; Exercises the superposition monad mechanics with trivial
 ;; hand-rolled parsers (raw str-prefix? checks on the state's input,
-;; consuming via take-char) plus the library's symbol and full-symbol
-;; parsers. Every test case runs through the single top-level collapse
-;; with the pick-result fold and the line-0 seed (parse-failed):
+;; consuming via take-char) plus the library's symbol, full-symbol,
+;; and int-lit parsers. Every test case runs through the single
+;; top-level collapse with the pick-result fold and the line-0 seed
+;; (parse-failed):
 ;;   t1 unit: a bare ParserMatch passes through
 ;;   t2 bind: a flat-map chains a second parser after the first
 ;;   t3 alt: one branch fails (NUL) and the other matches; both fail
@@ -20,6 +21,10 @@
 ;;      symbol (empty ns), ns/name split at /, leading whitespace,
 ;;      stop at space, and two NUL failures (dangling slash, non-start
 ;;      char) -> the seed
+;;   t20-t29 int-lit: the library's int-lit parser - basic, negative,
+;;      leading whitespace, zero, stop at non-digit, multi-digit,
+;;      negative with whitespace, and three NUL failures ("-" with no
+;;      digits, a plain symbol, empty input) -> the seed
 ;;
 ;; main's body is a bare sequence: each check is a side-effecting
 ;; workflow, and the machine runs every reachable side effect at
@@ -63,6 +68,12 @@
     (.sym-name v))
   (sym-ns [v]
     (.ns v)))
+(defp int-val [v] "")
+
+(extend-type ast/IntegerLit
+  (int-val [v]
+    (str (.value v))))
+
 
 ;; --- Trivial hand-rolled parsers --------------------------------------
 
@@ -133,6 +144,21 @@
 
           (println name " FAIL got: " kind " " (sym-ns val) "/"
                    (sym-name val) " " (match-input res)))))
+(defn int-ok [res expect-val expect-input]
+  (let [val (match-val res)]
+    (and (not (str= (res-kind res) "error"))
+         (str= (int-val val) expect-val)
+         (str= (match-input res) expect-input))))
+
+(defn check-int [name res expect-val expect-input]
+  (let [kind (res-kind res)
+        val (match-val res)]
+    (cond (int-ok res expect-val expect-input)
+          (println name "OK")
+
+          (println name " FAIL got: " kind " " (int-val val) " "
+                   (match-input res)))))
+
 
 (def parse-failed (rdr/ParserError "no parse" (rdr/make-state "" "rdr-sup.toc" 0)))
 
@@ -148,6 +174,12 @@
   (collapse rdr/pick-result
             ((.f rdr/full-symbol) (rdr/make-state input "rdr-sup.toc" 1))
             parse-failed))
+;; run-int: the whole int-lit parse over a fresh state, one collapse.
+(defn run-int [input]
+  (collapse rdr/pick-result
+            ((.f rdr/int-lit) (rdr/make-state input "rdr-sup.toc" 1))
+            parse-failed))
+
 
 (defn parse-result [p]
   (collapse rdr/pick-result p
@@ -205,9 +237,25 @@
   (check-error "t13-sym-empty" (run "") "no parse" "")
   (check-symbol "t14-full-basic" (run-full "foo") ast/no-symbol "foo" "")
   (check-symbol "t15-full-ns" (run-full "ns/sym") "ns" "sym" "")
+
+  ;; minimum repro of error
+  ;; (println 'ns/sym (run-full "ns/sym"))
+  ;; (println 'foo (run-full "fop"))
+
   (check-symbol "t16-full-ws" (run-full "  ns/sym  (x)") "ns" "sym" "  (x)")
   (check-symbol "t17-full-stop" (run-full "foo bar") ast/no-symbol "foo" " bar")
   (check-error "t18-full-dangling" (run-full "ns/") "Invalid symbol: 'ns/' at rdr-sup.toc: 1" "")
-  (check-error "t19-full-nostart" (run-full "(x)") "no parse" "")
+  (check-error "t19-full-nostart" (run-full "(x)") "no parse" "") 
+
+  (check-int "t20-int-basic" (run-int "42") "42" "")
+  (check-int "t21-int-neg" (run-int "-42") "-42" "")
+  (check-int "t22-int-ws" (run-int "  7 rest") "7" " rest")
+  (check-int "t23-int-zero" (run-int "0") "0" "")
+  (check-int "t24-int-stop" (run-int "42x") "42" "x")
+  (check-int "t25-int-multi" (run-int "31415") "31415" "")
+  (check-int "t26-int-neg-ws" (run-int " -7 ") "-7" " ")
+  (check-error "t27-int-nodigit" (run-int "-foo") "no parse" "")
+  (check-error "t28-int-sym" (run-int "foo") "no parse" "")
+  (check-error "t29-int-empty" (run-int "") "no parse" "")
   0
   )

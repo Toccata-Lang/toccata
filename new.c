@@ -1617,10 +1617,8 @@ void checkBuff() {
       leaks++;
     }
   }
-  subGraph("leaked", get(0x8c), 0);
   if (leaks) {
     fprintf(stderr, "\nLeaked pairs!! %u\n", leaks);
-    printTerm("leaked", get(0x8c));
     pb();
     pr();
     // BOOM("Leak pairs");

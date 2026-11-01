@@ -121,6 +121,14 @@ Lessons drawn from the parser emitter's IR deletion
   expression is a bare symbol, it is assumed to be a function of one
   argument and the previous value becomes that argument.
 
+* `for` is built into the compiler — syntax sugar for nested `flat-map`
+  calls (monad comprehension / do-notation). Each binding line is a
+  `flat-map` over the bound value, threading the state through; the final
+  expression is the result. `_` is a throwaway binding (the value is
+  discarded, the state is still threaded). A binding slot may hold any
+  `flat-map`-compatible value, including a `(| ...)` superposition. The
+  compiler expands it — it is not a separate combinator.
+
 ## Naming
 
 * By convention, types and ctors start with a capital and are camel-cased
@@ -242,6 +250,13 @@ Lessons drawn from the parser emitter's IR deletion
   covers. To create a string from a number of values, use 'str'. The compiler
   will desugar that to a call to 'str*' for you. 'str' may take any number of
   arguments.
+
+* `str-vect` (a `defp` in `hvm-core.toc`) is the default way of serializing
+  values to strings: a protocol that turns a value into the vector of string
+  parts making up its representation. A type opts in by giving it a
+  `str-vect` `extend-type` impl (one per ctor); `str`/`str*` dispatch through
+  it under the covers. Add a `str-vect` impl to any deftype that should print
+  meaningfully.
 
 * Do not use `escape-chars`.
 
