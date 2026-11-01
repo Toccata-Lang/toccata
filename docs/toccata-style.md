@@ -46,9 +46,16 @@ Lessons drawn from the parser emitter's IR deletion
   copy the shape (cf. the Maybe-defaulting idiom `(either (map (get …) fn)
   default)` in `interpreter/intrp-rdr.toc`).
 
-* Field getters are protocol-dispatched on the value's ctor — shared field
-  names across ctors (`.parsers` on three different ctors) are fine. Do not
-  rename fields for build-wide uniqueness.
+* Field getters are protocol-dispatched on a value's ctor — shared field
+  names across ctors (e.g. `.parsers` on three different ctors, or `state`
+  on `ParserMatch` and `ParserError`) are fine. Do not rename fields for
+  build-wide uniqueness.
+
+* Within a protocol impl, the receiver's ctor field names are in scope as
+  bare names bound to the receiver (the impl's first parameter): a bare
+  `state` in a `ParserMatch` impl IS the receiver's `state` field, read
+  directly. Prefer the bare name over the `.field` getter — it saves a
+  dispatch through the getter.
 
 * Delete dead machinery in the same change that orphans it — dead protocol
   impls especially, since they read as maintained API.
