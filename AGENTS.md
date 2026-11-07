@@ -57,7 +57,19 @@ If you are told to create a file, then only create it. Do not try to execute it 
   If a node's shown text doesn't match its span (or spans look wrong in any
   way), suspect the `ast-json` dump first — stop and report it, don't work
   around it. Files must be pure ASCII (docs/toccata-style.md): multi-byte
-  UTF-8 characters corrupt the dump's byte spans from that character to EOF.
+  UTF-8 characters corrupt the
+  dump's byte spans from that character to EOF.
+
+* When AUTHORING any new toccata code (snippets to splice with toc-edit or whole files), write
+  it in the count-prefixed format (docs/toc-ast-design.md) and run it
+  through `./tools/toc-ast/toc_ast.py serialize <in> <out>` before
+  splicing: every open form is a bracket immediately followed by the
+  number of forms it contains (`(3 fn (1 x) ...`), and closing brackets
+  and comments do not exist in that format. The serializer emits the
+  plain s-expression and runs the toc-edit `parse` gate on it: exit 0 =
+  output written, 1 = grammar error in the prefixed input (line:col on
+  stderr, nothing written), 2 = parse gate rejected (candidate saved as
+  `<out>.rejected`; a later success deletes it).
 
 * When trying to fix a syntax error in a `.toc` file (unbalanced or
   mis-nested parens/brackets, missing tokens), use the structural

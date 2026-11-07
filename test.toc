@@ -1,49 +1,45 @@
-;; Why this leaks nodes (21 pairs, Redexes: 0, exit 1).
-;;
-;; The program computes correctly: (fix f) 1 unrolls twice -
-;;   cond(identity 1, (self 0), 0) -> test forces to 1 -> intCond keeps
-;;   (self 0); cond(identity 0, ...) -> test forces to 0 -> intCond
-;;   returns 0. The result 0 is discarded.
-;;
-;; The leak is structural, not a bug in this test:
-;;
-;; 1. fix in hvm-core.toc is (defn fix [f] (f (fix f))) - self-recursion
-;;    through its own global REF. f is used twice in the body, so codegen
-;;    emits dupeArg(f_1, &f_1_1, 9). f is a LAM (non-native), so
-;;    makeLazyDup builds the LAZ/DUP self-referential sharing network
-;;    (the "D 9" / "S 9" nodes in the graphs, the "SUP 9" at 0x46 in the
-;;    final buffer dump).
-;;
-;; 2. intCond (runtime3.c:3170) selects a branch with
-;;    interact(ERA, droppedBranch) + move(portLoc(2, args), keptBranch).
-;;    The kept branch is re-inserted as a VAR indirection into a thunk
-;;    that is never re-forced through the same path, and the DUP/lazy-LAZ
-;;    network that correlated the two uses of f is consumed only along
-;;    the path that actually ran.
-;;
-;; 3. The machine has no garbage collector: HVM pairs are freed only when
-;;    an interaction touches them. The unforced half of the network (the
-;;    APP/LAZ/VAR web at 0x0a-0x46, incl. the self-cycle APP@0x40 <->
-;;    LAZ@0x0c) is orphaned but never ERA'd. take on LAZ/SUB deliberately
-;;    leaves the location allocated (implementation.md), so those thunks
-;;    persist. Each terminated fix recursion leaves its unforced thunk
-;;    web behind.
-;;
-;; Same known pattern as the reader's fix-based many
-;; (interpreter/intrp-rdr.toc: "TODO: this version leaks nodes").
-;;
 
-;; This programs leaks nodes because of the way 'fix' is written
+(deftype ParserState [input values]
+  ! input String)
 
-;; (defn fix [f]
-;;   (f (fix f)))
+(defp pick-result [r f])
+(defp next-step [r g])
+(defp parser-fn [p])
+
+(deftype ParserResults
+  (ParserMatch [value state]
+    (next-step [m nxt]
+               ((parser-fn (nxt value)) state))
+    (pick-result [m acc]
+                 m))
+
+  (ParserError [msg]
+    (pick-result [err1 err2]
+                 err1)))
+
+(deftype Parser [fst]
+  (parser-fn [_]
+    fst))
+
+(defn bind [p k]
+  (Parser (fn [st]
+            (next-step ((parser-fn p) st) k))))
+
+(def two-live
+  (Parser (fn [state]
+            (let [in (.input state)]
+              (| (ParserMatch "x" (ParserState (rest in) (.values state)))
+                 (ParserMatch "y" (ParserState (rest in) (.values state))))))))
+
+(defn two [p]
+  (bind p (fn [xs]
+            (bind p
+                  (fn [ys]
+                    (Parser (fn [st]
+                              (ParserMatch (vector xs ys)))))))))
 
 (defn main [argv]
-  (((fn [p]
-      (fix (fn [self]
-             (fn [s]
-               (cond (p s)
-                     (self 0)
-                     0)))))
-    identity)
-   1))  
+  (collapse pick-result
+            ((parser-fn (two two-live)) (ParserState "a" "v"))
+            (ParserError "no parse"))
+  0)

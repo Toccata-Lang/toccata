@@ -111,6 +111,47 @@ the owner will re-point what a parse produces — by changing the definition of
 **This seam is not designed yet (TBD).** Do not bake a particular output-shape
 assumption into the pieces built now. Keep the reader's output re-pointable.
 
+### 3.5 Superposition belongs at the result level, never at the parser value level
+
+Owner-confirmed runtime semantics: **a superposition that is DUPed (its
+value used more than once) takes the *same branch* in every copy —
+duplication is *correlated*, not independent.** This is intended HVM
+semantics, not a bug.
+
+Evidence (deterministic minimal repro):
+
+- `((fn [s] (pr* (number-str (+ s s)))) (| 1 2))` → 2 leaves: `2` and `4`
+  — the diagonal only; the cross terms `1+2=3` and `2+1=3` are missing.
+- Decisive contrast: `(let [a (| 1 2) b (| 3 4)] (+ a b))` → 4 leaves
+  `4 5 5 6` (two **distinct** sups, each used once → independent), while
+  `(let [s (| 1 2)] (+ s s))` → 2 leaves `2 4` (one sup used twice →
+  correlated).
+
+Consequences for the reader:
+
+- A **single `Parser` value is DUP-safe**: reusing it (passing it to two
+  call sites, applying it at several positions) just refcounts the same
+  value; each application of its `f` is independent.
+- A **sup of Parser values is not DUP-safe**: `(| p q)` creates a sup of
+  *values*. If that value is reused — e.g. a `many`-style loop applies
+  `p` at every position — every use is forced onto the same branch, and
+  the parse dead-ends at the first position where that branch doesn't
+  match.
+- **Result-level superposition is the safe level**: a sup of
+  `ParserResults` distributes correctly through the `flat-map`/`collapse`
+  machinery (verified directly: a 2-leaf sup of matches stepped through
+  the reader's `next-step` produces all four combinations).
+
+Design rule: a combinator that offers alternatives must return **one
+`Parser`** whose `f` builds a fresh sup of *results* per application —
+never a sup of parsers. Shape identified during the t47 investigation
+(then reverted — not in the tree):
+
+    (defn alt [pa pb]
+      (Parser (fn [s]
+                (| ((.f pa) s)
+                   ((.f pb) s)))))
+
 ## 4. Current state of the reader (`interpreter/intrp-rdr.toc`)
 
 Self-contained library (no `main`). Its only import is
@@ -152,7 +193,9 @@ Self-contained library (no `main`). Its only import is
   `str-vect`, `map`, `flat-map`.
 - `error [msg]` → a parser that always yields `ParserError`.
 - `always [v]` → a parser that yields `ParserMatch v` without consuming.
-- `optional [p]` → `(| p (always ""))`.
+- `optional [p]` → `( | p (always ""))` — **latent §3.5 violation** (a
+  sup of parser values); dormant only because it is used once per call
+  site today.
 
 ### 4.5 Leaf parsers built so far
 - `comment` — match a `;` comment, return its raw text.
@@ -312,3 +355,23 @@ broader than scope (a). Confirm before assuming.
   non-quote, empty input). First run caught an off-by-one (text span
   included the closing quote) — fixed in `string-body`. Next: the
   expression parsers (calls first).
+- t47 (`many` over an alternation) investigated; root cause found and
+  recorded as §3.5; the identified fix was **reverted — not in the
+  tree**. Symptom: `(many (| (literal 'a) (literal 'b)))` over `"abab"`
+  returns `[a] "bab"` instead of `[a b a b]` (input-dependent: `"ba"`
+  parses, `"ab"` doesn't; t42–t46 pass, t47 fails). Not a `many-step`
+  logic error: the raw sup tree is already corrupt before `collapse`
+  runs, and the corruption is *correct* correlated duplication (§3.5) of
+  a sup of Parser *values* — `many-step` reuses its `p` at every
+  recursion level (`x p` and `(many-step p)`), forcing every parse
+  position onto the same branch. t44 passes because its `p` is a single
+  Parser (DUP-safe VAL); t47's is a sup of Parsers. The full reader
+  showed more severe symptoms on top (non-determinism, buffer
+  exhaustion, lost side effects) — the same correlation compounded by
+  recursion and state threading. The identified fix (an `alt`
+  combinator per §3.5, with t47 calling it) was reverted; `intrp-rdr.toc`
+  and `rdr-sup.toc` are back to their committed state and t47 still
+  fails. Open: (a) re-apply the `alt` fix when ready; (b) `optional` has
+  the same latent pattern (§4.4); (c) a secondary `probe-many-sup`
+  symptom (1974 leaked pairs, non-deterministic loss of `println` side
+  effects) was never minimized — likely the same root cause.
